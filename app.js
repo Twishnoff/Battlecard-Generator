@@ -158,7 +158,7 @@
         const letter = indexToLetter(idx) || String(idx + 1);
         return `<div class="initiative-item"><div class="initiative-badge">${escapeHtml(
           letter
-        )}</div><div class="initiative-copy">${escapeHtml(capToLimit(t))}</div></div>`;
+        )}</div><div class="initiative-copy">${escapeHtml(capToLimit(t, TIGHT_COPY_LIMIT))}</div></div>`;
       })
       .join("");
   }
@@ -185,7 +185,7 @@
           : "";
         return `<tr><td><div class="feature-cell"><strong>${escapeHtml(
           i.feature
-        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(capToLimit(i.explanation))}</td></tr>`;
+        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(capToLimit(i.explanation, TIGHT_COPY_LIMIT))}</td></tr>`;
       })
       .join("");
     el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
@@ -389,38 +389,52 @@
     return String.fromCharCode(65 + index);
   }
 
-  // Shared 300-character copy cap — the SAME limit used on the page
-  // (renderResults above) and here in the PDF, since there's no longer a
-  // separate condensed PDF-only field. The backend is asked to write
-  // within this limit from the start; capToLimit is the client-side
-  // safety net for whatever slips through over budget anyway (an older
-  // cached run, or a field the model missed) — it trims to the last full
-  // sentence under the limit, falling back to the last full word, so
-  // copy never gets cut off mid-word.
+  // Shared copy cap — the SAME limit used on the page (renderResults
+  // above) and here in the PDF, since there's no longer a separate
+  // condensed PDF-only field. Most prose fields use COPY_LIMIT (300);
+  // Top Prospect Initiatives and the Where We Win / Competitor
+  // Considerations explanations use the tighter TIGHT_COPY_LIMIT (280)
+  // since those render as more tightly-spaced list items. The backend is
+  // asked to write within whichever limit applies from the start;
+  // capToLimit is the client-side safety net for whatever slips through
+  // over budget anyway (an older cached run, or a field the model
+  // missed) — it trims to the last full sentence under the limit,
+  // falling back to the last full word, so copy never gets cut off
+  // mid-word.
   const COPY_LIMIT = 300;
+  const TIGHT_COPY_LIMIT = 280;
 
-  function capToLimit(text) {
+  function capToLimit(text, limit) {
+    const max = limit || COPY_LIMIT;
     const t = String(text == null ? "" : text).trim();
-    if (t.length <= COPY_LIMIT) return t;
-    const slice = t.slice(0, COPY_LIMIT);
+    if (t.length <= max) return t;
+    const slice = t.slice(0, max);
     const lastSentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
-    if (lastSentenceEnd > COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
+    if (lastSentenceEnd > max / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
     const lastSpace = slice.lastIndexOf(" ");
-    const base = lastSpace > COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, COPY_LIMIT - 1);
+    const base = lastSpace > max / 2 ? slice.slice(0, lastSpace) : slice.slice(0, max - 1);
     return `${base.trim()}…`;
   }
 
+  // Red used for the "Where We Compete" tag in the PDF (matches the
+  // on-page tag's --tag-compete background color) so it stands out from
+  // the surrounding body copy the same way the red pill does on the page.
+  const WHERE_WE_COMPETE_RGB = [220, 38, 38];
+
   // Builds the plain-text body lines for a given box, shared by the PDF
-  // renderer. Each line is { bold, text, gapAfter, url }. Mirrors the
-  // on-page HTML rendering above — same copy, same 300-character cap
-  // (see COPY_LIMIT above). buildPdf below paginates on top of that, and
-  // overflows any box that still doesn't fit into a "(Cont.)" box. A line
-  // with `url` set is drawn as a clickable link (see drawBox) — used for
-  // each customer reference's proof-point link.
+  // renderer. Each line is { bold, text, gapAfter, url, colorRgb }.
+  // Mirrors the on-page HTML rendering above — same copy, same
+  // character caps (see COPY_LIMIT/TIGHT_COPY_LIMIT above). buildPdf
+  // below paginates on top of that, and overflows any box that still
+  // doesn't fit into a "(Cont.)" box. A line with `url` set is drawn as a
+  // clickable link (see drawBox) — used for each customer reference's
+  // proof-point link. A line with `colorRgb` set is drawn in that color
+  // instead of the default body/label color — used for the "Where We
+  // Compete" tag.
   function buildPdfLines(boxKey, boxes) {
     const lines = [];
-    const push = (text, bold, gapAfter, url) =>
-      lines.push({ text, bold: !!bold, gapAfter: gapAfter || 4, url: url || null });
+    const push = (text, bold, gapAfter, url, colorRgb) =>
+      lines.push({ text, bold: !!bold, gapAfter: gapAfter || 4, url: url || null, colorRgb: colorRgb || null });
 
     if (boxKey === "competitorProduct") {
       const cp = boxes.competitorProduct || {};
@@ -440,15 +454,17 @@
     } else if (boxKey === "topInitiatives") {
       const items = boxes.topInitiatives || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${capToLimit(t)}`, false, 5));
+      items.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${capToLimit(t, TIGHT_COPY_LIMIT)}`, false, 5));
     } else if (boxKey === "whereWeWin" || boxKey === "competitorChallenges") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
       items.forEach((i) => {
-        const tag = boxKey === "competitorChallenges" && i.whereWeCompete ? "  [Where We Compete]" : "";
-        push(`${i.feature}${tag}`, true, 2);
+        push(i.feature, true, 2);
         if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
-        push(capToLimit(i.explanation), false, 6);
+        if (boxKey === "competitorChallenges" && i.whereWeCompete) {
+          push("Where We Compete", true, 3, null, WHERE_WE_COMPETE_RGB);
+        }
+        push(capToLimit(i.explanation, TIGHT_COPY_LIMIT), false, 6);
       });
     } else if (boxKey === "customerReferences") {
       const items = boxes.customerReferences || [];
@@ -578,6 +594,10 @@
         // brand accent so it reads as clickable, even though PDF viewers
         // don't otherwise style textWithLink text differently on their own.
         doc.setTextColor(accentRgb[0], accentRgb[1], accentRgb[2]);
+      } else if (line.colorRgb) {
+        // An explicitly colored line (the "Where We Compete" tag) — takes
+        // priority over the default bold/normal body coloring below.
+        doc.setTextColor(line.colorRgb[0], line.colorRgb[1], line.colorRgb[2]);
       } else {
         doc.setTextColor(line.bold ? 31 : 70, line.bold ? 32 : 71, line.bold ? 35 : 78);
       }

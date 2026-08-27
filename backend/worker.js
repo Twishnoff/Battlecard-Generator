@@ -347,7 +347,7 @@ Return ONLY a single JSON object (no prose before or after, no markdown code fen
   }
 }
 
-Length rule that applies to EVERY prose field below — "valueProposition", "primaryProducts", each "description", each string in "topInitiatives", every "explanation", every "answer", and "pricing.summary" (NOT names, NOT booleans, NOT the "talkingPoints" questions, which are fixed strings you're told to use verbatim): each one must be 300 characters or fewer, counting spaces and punctuation. This is the exact same copy shown on the webpage and in the exported PDF, so write each field as an already-tight, complete thought from the start — don't write a longer draft assuming it will get trimmed later. If a point can't be fully made in 300 characters, keep the single strongest, most concrete part (a specific number, name, or outcome) and drop the rest rather than writing a vaguer full-length version. Do not pad a field with filler just to approach the limit — shorter is fine as long as the point survives.
+Length rule that applies to EVERY prose field below (NOT names, NOT booleans, NOT the "talkingPoints" questions, which are fixed strings you're told to use verbatim), counting spaces and punctuation: "valueProposition", "primaryProducts", each "description", every "answer", and "pricing.summary" must be 300 characters or fewer; each string in "topInitiatives" and every "explanation" (in both "whereWeWin" and "competitorChallenges") must be 280 characters or fewer — those three are shown as more tightly-spaced list items on the page and in the PDF, so they get the tighter limit. This is the exact same copy shown on the webpage and in the exported PDF, so write each field as an already-tight, complete thought from the start — don't write a longer draft assuming it will get trimmed later. If a point can't be fully made within its limit, keep the single strongest, most concrete part (a specific number, name, or outcome) and drop the rest rather than writing a vaguer full-length version. Do not pad a field with filler just to approach the limit — shorter is fine as long as the point survives.
 
 Rules for each field:
 
@@ -489,23 +489,28 @@ function boolVal(v) {
 // ---------------------------------------------------------------------
 // 300-character copy cap — the SAME cap for every surface (the webpage
 // and the PDF both show this exact field now; there's no separate
-// condensed variant anymore). The model is asked (see buildPrompt) to
-// write within this limit from the start; capToLimit is the safety net
-// for whatever slips through over budget anyway. It trims to the last
-// full sentence under the limit, falling back to the last full word, so
-// nothing gets cut off mid-word.
+// condensed variant anymore) — EXCEPT Top Prospect Initiatives and the
+// "explanation" fields in Where We Win / Competitor Considerations, which
+// use the tighter TIGHT_COPY_LIMIT (280) since those render as more
+// tightly-spaced list items. The model is asked (see buildPrompt) to
+// write within whichever limit applies from the start; capToLimit is the
+// safety net for whatever slips through over budget anyway. It trims to
+// the last full sentence under the limit, falling back to the last full
+// word, so nothing gets cut off mid-word.
 // ---------------------------------------------------------------------
 
 const COPY_LIMIT = 300;
+const TIGHT_COPY_LIMIT = 280;
 
-function capToLimit(text) {
+function capToLimit(text, limit) {
+  const max = limit || COPY_LIMIT;
   const t = (text || "").trim();
-  if (t.length <= COPY_LIMIT) return t;
-  const slice = t.slice(0, COPY_LIMIT);
+  if (t.length <= max) return t;
+  const slice = t.slice(0, max);
   const lastSentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
-  if (lastSentenceEnd > COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
+  if (lastSentenceEnd > max / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
   const lastSpace = slice.lastIndexOf(" ");
-  const base = lastSpace > COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, COPY_LIMIT - 1);
+  const base = lastSpace > max / 2 ? slice.slice(0, lastSpace) : slice.slice(0, max - 1);
   return `${base.trim()}…`;
 }
 
@@ -554,7 +559,7 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     .map((i) => (typeof i === "string" ? i.trim() : str(i && i.text)))
     .filter(Boolean)
     .slice(0, 10)
-    .map((t) => capToLimit(t));
+    .map((t) => capToLimit(t, TIGHT_COPY_LIMIT));
 
   // Valid range for relatedInitiativeIndex depends on the (already
   // sanitized) topInitiatives length, so this must run after that array
@@ -571,7 +576,7 @@ function sanitizeBoxes(raw, competitorNameFallback) {
       .slice(0, 5)
       .map((i) => ({
         feature: str(i.feature),
-        explanation: capToLimit(str(i.explanation)),
+        explanation: capToLimit(str(i.explanation), TIGHT_COPY_LIMIT),
         initiativeLetter: initiativeLetterFor(i),
       }));
 
@@ -581,7 +586,7 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     .slice(0, 5)
     .map((i) => ({
       feature: str(i.feature),
-      explanation: capToLimit(str(i.explanation)),
+      explanation: capToLimit(str(i.explanation), TIGHT_COPY_LIMIT),
       whereWeCompete: boolVal(i.whereWeCompete),
       initiativeLetter: initiativeLetterFor(i),
     }));
