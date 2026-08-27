@@ -438,10 +438,18 @@
     return lines;
   }
 
-  // Chrome (title + divider) reserved at the top of every box, and a small
-  // bottom pad — used both to measure how tall a box needs to be and to
-  // know where its body text starts when actually drawing it.
-  const BOX_CHROME_TOP = 35;
+  // Extra breathing room between the title's divider line and the body
+  // copy below it (previously the copy started right on top of the line).
+  const BOX_TITLE_BODY_GAP = 8;
+
+  // Chrome (title + divider + the gap above) reserved at the top of every
+  // box, and a small bottom pad — used both to measure how tall a box
+  // needs to be and to know where its body text starts when actually
+  // drawing it. Keep this in sync with drawBox below: it must equal
+  // however far down drawBox's cursorY has moved by the time it starts
+  // drawing body lines, or content will get measured/allocated one height
+  // and drawn at another.
+  const BOX_CHROME_TOP = 35 + BOX_TITLE_BODY_GAP;
   const BOX_BOTTOM_PAD = 10;
   const BOX_PAD_X = 10;
 
@@ -516,6 +524,7 @@
 
     doc.setDrawColor(230, 230, 234);
     doc.line(x + pad, cursorY - 8, x + w - pad, cursorY - 8);
+    cursorY += BOX_TITLE_BODY_GAP;
 
     const bottomLimit = y + h - 8;
 
@@ -707,11 +716,104 @@
       });
     }
 
-    // 2 rows of 4 boxes (each spilling into its own "(Cont.)" box(es) if it
-    // runs long), then one full-width flowing box for Key Talking Points.
+    // Customer References and Pricing Overview are usually short, which
+    // used to leave a lot of empty page space under them while Key
+    // Talking Points got pushed into its own full-width section below the
+    // whole grid. Instead: keep the row's height the same as it would
+    // otherwise be, but only give Customer References and Pricing
+    // Overview the top half of it; the bottom half, spanning both of
+    // their columns, is where Key Talking Points starts. This only makes
+    // sense because those two boxes are always drawn side by side on the
+    // same page as part of this one row (drawRow's page-break logic below
+    // moves the WHOLE row together, never splits it) — if that ever
+    // stopped being true this function would need to fall back to the
+    // plain drawRow + separate flowing box arrangement used for row 1.
+    function drawSecondRowWithTalkingPoints() {
+      const keys = ["whereWeWin", "competitorChallenges", "customerReferences", "pricing"];
+      const boxW = (pageWidth - MARGIN * 2 - GAP * (keys.length - 1)) / keys.length;
+      const perBoxLines = keys.map((key) => buildPdfLines(key, run.boxes));
+
+      let rowHeight = 0;
+      perBoxLines.forEach((lines) => {
+        rowHeight = Math.max(rowHeight, boxHeightForLines(doc, lines, boxW));
+      });
+      const maxFreshPageHeight = pageHeight - MARGIN * 2 - 40;
+      // Floor: with the row split in two, each half still needs room for
+      // its own title chrome plus a few lines, or Customer References /
+      // Pricing Overview / the first Key Talking Points chunk would have
+      // no usable space at all.
+      const minRowHeight = 2 * (BOX_CHROME_TOP + BOX_BOTTOM_PAD + 20) + GAP;
+      rowHeight = Math.min(Math.max(rowHeight, minRowHeight), maxFreshPageHeight);
+
+      if (y + rowHeight > pageHeight - MARGIN) {
+        doc.addPage();
+        y = drawContinuationHeader();
+      }
+
+      const rowY = y;
+      const halfHeight = rowHeight / 2;
+      const talkingPointsHeight = rowHeight - halfHeight - GAP;
+      const overflow = []; // { key, lines } for any box that didn't fully fit
+
+      // Where We Win / Competitor Challenges: unchanged, full row height.
+      ["whereWeWin", "competitorChallenges"].forEach((key, i) => {
+        const availableContentHeight = rowHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
+        const { chunk, remaining } = splitLinesForHeight(doc, perBoxLines[i], boxW - BOX_PAD_X * 2, availableContentHeight);
+        if (remaining.length > 0) overflow.push({ key, lines: remaining });
+        drawBox(doc, { x: MARGIN + i * (boxW + GAP), y: rowY, w: boxW, h: rowHeight, title: BOX_TITLES[key], lines: chunk, accentRgb });
+      });
+
+      // Customer References / Pricing Overview: half height.
+      ["customerReferences", "pricing"].forEach((key, i) => {
+        const idx = i + 2;
+        const availableContentHeight = halfHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
+        const { chunk, remaining } = splitLinesForHeight(doc, perBoxLines[idx], boxW - BOX_PAD_X * 2, availableContentHeight);
+        if (remaining.length > 0) overflow.push({ key, lines: remaining });
+        drawBox(doc, { x: MARGIN + idx * (boxW + GAP), y: rowY, w: boxW, h: halfHeight, title: BOX_TITLES[key], lines: chunk, accentRgb });
+      });
+
+      // Key Talking Points: starts in the freed space below Customer
+      // References + Pricing Overview, spanning both of their columns.
+      const talkingPointsAllLines = buildPdfLines("talkingPoints", run.boxes);
+      const talkingPointsW = boxW * 2 + GAP;
+      const talkingPointsX = MARGIN + 2 * (boxW + GAP);
+      const talkingPointsAvailableHeight = talkingPointsHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
+      const { chunk: tpChunk, remaining: tpRemaining } = splitLinesForHeight(
+        doc,
+        talkingPointsAllLines,
+        talkingPointsW - BOX_PAD_X * 2,
+        talkingPointsAvailableHeight
+      );
+      drawBox(doc, {
+        x: talkingPointsX,
+        y: rowY + halfHeight + GAP,
+        w: talkingPointsW,
+        h: talkingPointsHeight,
+        title: BOX_TITLES.talkingPoints,
+        lines: tpChunk,
+        accentRgb,
+      });
+
+      y = rowY + rowHeight + GAP;
+
+      // Anything that didn't fit — Where We Win / Competitor Challenges
+      // overflow, Customer References / Pricing Overview overflow, or the
+      // rest of Key Talking Points — spills into full-width "(Cont.)"
+      // boxes right after the row, in reading order.
+      overflow.forEach(({ key, lines }) => {
+        flowBoxLines(BOX_TITLES[key], lines, { startAsContinuation: true });
+      });
+      if (tpRemaining.length > 0) {
+        flowBoxLines(BOX_TITLES.talkingPoints, tpRemaining, { startAsContinuation: true });
+      }
+    }
+
+    // Row 1 is a plain 4-box row. Row 2 folds Key Talking Points in below
+    // Customer References / Pricing Overview instead of giving it its own
+    // full-width section — see drawSecondRowWithTalkingPoints above —
+    // which is what keeps a normal-sized battle card to 1-2 pages.
     drawRow(["competitorProduct", "ourFeatures", "theirFeatures", "topInitiatives"]);
-    drawRow(["whereWeWin", "competitorChallenges", "customerReferences", "pricing"]);
-    flowBoxLines(BOX_TITLES.talkingPoints, buildPdfLines("talkingPoints", run.boxes));
+    drawSecondRowWithTalkingPoints();
 
     const pageCount = doc.internal.getNumberOfPages();
     for (let i = 1; i <= pageCount; i += 1) {
