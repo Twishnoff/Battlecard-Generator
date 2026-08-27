@@ -153,12 +153,13 @@
       return;
     }
     el.removeAttribute("data-state");
-    el.innerHTML = items
+    const capped = capTotalLength(items, BOX_TOTAL_LIMIT);
+    el.innerHTML = capped
       .map((t, idx) => {
         const letter = indexToLetter(idx) || String(idx + 1);
         return `<div class="initiative-item"><div class="initiative-badge">${escapeHtml(
           letter
-        )}</div><div class="initiative-copy">${escapeHtml(capToLimit(t, TIGHT_COPY_LIMIT))}</div></div>`;
+        )}</div><div class="initiative-copy">${escapeHtml(t)}</div></div>`;
       })
       .join("");
   }
@@ -175,8 +176,12 @@
       return;
     }
     el.removeAttribute("data-state");
+    const explanations = capTotalLength(
+      items.map((i) => i.explanation),
+      BOX_TOTAL_LIMIT
+    );
     const rows = items
-      .map((i) => {
+      .map((i, idx) => {
         const compete = competeFlag && i.whereWeCompete ? '<div class="tag-compete">Where We Compete</div>' : "";
         const badge = i.initiativeLetter
           ? `<div class="initiative-badge" title="Ties to Top Prospect Initiative ${escapeHtml(
@@ -185,7 +190,7 @@
           : "";
         return `<tr><td><div class="feature-cell"><strong>${escapeHtml(
           i.feature
-        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(capToLimit(i.explanation, TIGHT_COPY_LIMIT))}</td></tr>`;
+        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(explanations[idx])}</td></tr>`;
       })
       .join("");
     el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
@@ -391,18 +396,14 @@
 
   // Shared copy cap — the SAME limit used on the page (renderResults
   // above) and here in the PDF, since there's no longer a separate
-  // condensed PDF-only field. Most prose fields use COPY_LIMIT (300);
-  // Top Prospect Initiatives and the Where We Win / Competitor
-  // Considerations explanations use the tighter TIGHT_COPY_LIMIT (280)
-  // since those render as more tightly-spaced list items. The backend is
-  // asked to write within whichever limit applies from the start;
+  // condensed PDF-only field. Most prose fields use COPY_LIMIT (300).
+  // The backend is asked to write within this limit from the start;
   // capToLimit is the client-side safety net for whatever slips through
   // over budget anyway (an older cached run, or a field the model
   // missed) — it trims to the last full sentence under the limit,
   // falling back to the last full word, so copy never gets cut off
   // mid-word.
   const COPY_LIMIT = 300;
-  const TIGHT_COPY_LIMIT = 280;
 
   function capToLimit(text, limit) {
     const max = limit || COPY_LIMIT;
@@ -416,6 +417,27 @@
     return `${base.trim()}…`;
   }
 
+  // Top Prospect Initiatives, Where We Win, and Competitor Considerations
+  // don't cap any single item — instead the whole box's combined copy is
+  // asked to stay under BOX_TOTAL_LIMIT (1400 characters), so the model
+  // can write a couple of items at real length and others as a single
+  // tight sentence, as the content calls for. The backend enforces this
+  // as a total, but capTotalLength is the client-side safety net for
+  // whatever still slips over (an older cached run, or a response that
+  // missed the budget) — rather than cutting off the box's later items
+  // to zero, it trims every item's SHARE of the overage proportionally
+  // (each item's own capToLimit still resolves at a real sentence/word
+  // boundary), so every item stays present, just shorter.
+  const BOX_TOTAL_LIMIT = 1400;
+
+  function capTotalLength(texts, totalBudget) {
+    const trimmed = texts.map((t) => String(t == null ? "" : t).trim());
+    const total = trimmed.reduce((sum, t) => sum + t.length, 0);
+    if (total <= totalBudget || total === 0) return trimmed;
+    const scale = totalBudget / total;
+    return trimmed.map((t) => capToLimit(t, Math.max(20, Math.floor(t.length * scale))));
+  }
+
   // Red used for the "Where We Compete" tag in the PDF (matches the
   // on-page tag's --tag-compete background color) so it stands out from
   // the surrounding body copy the same way the red pill does on the page.
@@ -424,7 +446,7 @@
   // Builds the plain-text body lines for a given box, shared by the PDF
   // renderer. Each line is { bold, text, gapAfter, url, colorRgb }.
   // Mirrors the on-page HTML rendering above — same copy, same
-  // character caps (see COPY_LIMIT/TIGHT_COPY_LIMIT above). buildPdf
+  // character caps (see COPY_LIMIT/BOX_TOTAL_LIMIT above). buildPdf
   // below paginates on top of that, and overflows any box that still
   // doesn't fit into a "(Cont.)" box. A line with `url` set is drawn as a
   // clickable link (see drawBox) — used for each customer reference's
@@ -454,17 +476,22 @@
     } else if (boxKey === "topInitiatives") {
       const items = boxes.topInitiatives || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${capToLimit(t, TIGHT_COPY_LIMIT)}`, false, 5));
+      const capped = capTotalLength(items, BOX_TOTAL_LIMIT);
+      capped.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${t}`, false, 5));
     } else if (boxKey === "whereWeWin" || boxKey === "competitorChallenges") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((i) => {
+      const explanations = capTotalLength(
+        items.map((i) => i.explanation),
+        BOX_TOTAL_LIMIT
+      );
+      items.forEach((i, idx) => {
         push(i.feature, true, 2);
         if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
         if (boxKey === "competitorChallenges" && i.whereWeCompete) {
           push("Where We Compete", true, 3, null, WHERE_WE_COMPETE_RGB);
         }
-        push(capToLimit(i.explanation, TIGHT_COPY_LIMIT), false, 6);
+        push(explanations[idx], false, 6);
       });
     } else if (boxKey === "customerReferences") {
       const items = boxes.customerReferences || [];
@@ -647,27 +674,30 @@
       return MARGIN + 32;
     }
 
-    // Full title bar + logo + info strip — page 1 only.
+    // Compact title bar + logo + info strip — page 1 only. Kept
+    // deliberately short (roughly half the height this used to take) so
+    // the first grid row has real room to land on page 1 instead of the
+    // header alone pushing every box to later pages.
     if (run.logoDataUri) {
       try {
-        doc.addImage(run.logoDataUri, MARGIN, y, 36, 36, undefined, "FAST");
+        doc.addImage(run.logoDataUri, MARGIN, y, 24, 24, undefined, "FAST");
       } catch (err) {
         // Unsupported format or corrupt data URI — silently skip the logo.
       }
     }
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(20);
+    doc.setFontSize(15);
     doc.setTextColor(31, 32, 35);
-    doc.text(`Competitive Battle Card: ${run.competitorName}`, pageWidth / 2, y + 24, { align: "center" });
-    y += 46;
+    doc.text(`Competitive Battle Card: ${run.competitorName}`, pageWidth / 2, y + 15, { align: "center" });
+    y += 24;
 
     doc.setDrawColor(accentRgb[0], accentRgb[1], accentRgb[2]);
-    doc.setLineWidth(2);
+    doc.setLineWidth(1.2);
     doc.line(MARGIN, y, pageWidth - MARGIN, y);
-    y += 18;
+    y += 10;
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
+    doc.setFontSize(8);
     doc.setTextColor(80, 81, 88);
     const generated = new Date(run.generatedAt || Date.now()).toLocaleString();
     const infoLine = [
@@ -678,7 +708,7 @@
       `Specified Industry: ${run.industry || "Unspecified"}`,
     ].join("    |    ");
     doc.text(doc.splitTextToSize(infoLine, pageWidth - MARGIN * 2), MARGIN, y);
-    y += 26;
+    y += 14;
 
     // Draws one full-width box that can flow across as many pages as its
     // content needs. Used both for Key Talking Points (which is always
