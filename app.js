@@ -26,6 +26,16 @@
     boxEls[key] = document.querySelector(`#box-${key} .box-body`);
   });
 
+  // "Their Key Features" is titled after whichever competitor was actually
+  // researched, once that's known — falls back to this generic placeholder
+  // (also the default text baked into index.html) before/between runs.
+  const THEIR_FEATURES_PLACEHOLDER = "Competitor Key Features";
+  const theirFeaturesTitleEl = document.querySelector("#box-theirFeatures h2");
+
+  function setTheirFeaturesTitle(competitorName) {
+    theirFeaturesTitleEl.textContent = competitorName ? `${competitorName} Key Features` : THEIR_FEATURES_PLACEHOLDER;
+  }
+
   const REQUIRED_INPUTS = [emailInput, companyUrlInput, competitorUrlInput, jobTitleInput];
 
   // Holds everything the PDF template needs from the most recent successful
@@ -70,6 +80,7 @@
       el.removeAttribute("data-state");
       el.innerHTML = '<span class="loading"><span class="spinner" aria-hidden="true"></span>Generating…</span>';
     });
+    setTheirFeaturesTitle(null);
   }
 
   function resetBoxesToNoData() {
@@ -77,6 +88,7 @@
       el.setAttribute("data-state", "empty");
       el.textContent = "No Data Collected";
     });
+    setTheirFeaturesTitle(null);
   }
 
   function disablePdfButton() {
@@ -315,6 +327,7 @@
       }
 
       renderResults(payload);
+      setTheirFeaturesTitle(payload.competitorName || competitorUrl);
 
       lastRunData = {
         companyUrl,
@@ -411,9 +424,12 @@
 
     if (boxKey === "competitorProduct") {
       const cp = boxes.competitorProduct || {};
-      push(`Competitor Name: ${cp.competitorName || "—"}`, false, 6);
-      push(`Value Proposition: ${capToLimit(cp.valueProposition) || "—"}`, false, 6);
-      push(`Primary Products: ${capToLimit(cp.primaryProducts) || "—"}`, false, 6);
+      push("Competitor Name:", true, 2);
+      push(cp.competitorName || "—", false, 6);
+      push("Value Proposition:", true, 2);
+      push(capToLimit(cp.valueProposition) || "—", false, 6);
+      push("Primary Products:", true, 2);
+      push(capToLimit(cp.primaryProducts) || "—", false, 6);
     } else if (boxKey === "ourFeatures" || boxKey === "theirFeatures") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
@@ -588,6 +604,14 @@
     const GAP = 10;
     const accentRgb = hexToRgb(run.brandColor);
 
+    // "Their Key Features" is titled after the researched competitor, same
+    // as on the page (see setTheirFeaturesTitle in app.js) — falls back to
+    // the same generic placeholder when no competitor name came back.
+    const boxTitles = {
+      ...BOX_TITLES,
+      theirFeatures: run.competitorName ? `${run.competitorName} Key Features` : "Competitor Key Features",
+    };
+
     let y = MARGIN;
 
     // A slim running header stamped at the top of every page after the
@@ -688,32 +712,58 @@
       }
     }
 
+    // Grows a row's height from its content-driven baseline toward the
+    // bottom of whichever page it actually landed on (the page-break
+    // decision above has already happened by the time this is called), up
+    // to however tall the row would need to be to show ALL of its
+    // content with zero overflow (`idealHeight`, uncapped). A row is
+    // usually capped well short of a full page (maxFreshPageHeight leaves
+    // room for a footer etc.), so there's normally real slack below it —
+    // this spends that slack on fitting more real content before falling
+    // back to spilling anything into a "(Cont.)" box, which is the whole
+    // point of the "try to extend the box toward the bottom of the page
+    // first" rule.
+    function growRowHeightToFitPage(rowY, baselineHeight, idealHeight) {
+      if (idealHeight <= baselineHeight) return baselineHeight;
+      // Same boundary drawRow/drawSecondRowWithTalkingPoints already used
+      // to decide whether this row needed a fresh page (pageHeight -
+      // MARGIN), just a couple points of rounding safety short of it —
+      // a box drawn up to that line still ends a full MARGIN above the
+      // page edge, well clear of the page-number footer near the bottom.
+      const availableOnPage = pageHeight - MARGIN - rowY - 2;
+      return Math.min(idealHeight, Math.max(baselineHeight, availableOnPage));
+    }
+
     // Draws a row of equal-width boxes, sized to whichever box in the row
     // needs the most room, capped at a full fresh page's height, moving
     // the WHOLE row to a fresh page first if it wouldn't fit on the
-    // current one. Any box whose content still doesn't fit within that
-    // height (a copy block hit the 280-character cap but there were still
-    // too many of them to fit — e.g. 10 Top Initiatives) has its overflow
-    // spilled into its own full-width "[Box Title] (Cont.)" box right
-    // after the row, via flowBoxLines — so nothing in the PDF ever gets
-    // clipped.
+    // current one. Once that page is settled, growRowHeightToFitPage
+    // above gets first crack at fitting everything by growing the row
+    // toward the bottom of the page. Only content that still doesn't fit
+    // after that (a copy block hit the 300-character cap but there were
+    // still too many of them to fit — e.g. 10 Top Initiatives, or the row
+    // landed on a page with little room left) has its overflow spilled
+    // into its own full-width "[Box Title] (Cont.)" box right after the
+    // row, via flowBoxLines — so nothing in the PDF ever gets clipped.
     function drawRow(keys) {
       const boxW = (pageWidth - MARGIN * 2 - GAP * (keys.length - 1)) / keys.length;
       const perBoxLines = keys.map((key) => buildPdfLines(key, run.boxes));
-      let rowHeight = 0;
+      let idealHeight = 0;
       perBoxLines.forEach((lines) => {
-        rowHeight = Math.max(rowHeight, boxHeightForLines(doc, lines, boxW));
+        idealHeight = Math.max(idealHeight, boxHeightForLines(doc, lines, boxW));
       });
       // Safety cap: never ask for a row taller than a full fresh page can
       // hold — drawBox's own ellipsis clip is only the last-resort net for
       // a single line taller than an entire fresh page.
       const maxFreshPageHeight = pageHeight - MARGIN * 2 - 40;
-      rowHeight = Math.min(rowHeight, maxFreshPageHeight);
+      let rowHeight = Math.min(idealHeight, maxFreshPageHeight);
 
       if (y + rowHeight > pageHeight - MARGIN) {
         doc.addPage();
         y = drawContinuationHeader();
       }
+
+      rowHeight = growRowHeightToFitPage(y, rowHeight, idealHeight);
 
       const availableContentHeight = rowHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
       const overflow = []; // { key, lines } for any box that didn't fully fit at rowHeight
@@ -734,7 +784,7 @@
           y,
           w: boxW,
           h: rowHeight,
-          title: BOX_TITLES[key],
+          title: boxTitles[key],
           lines: chunks[i],
           accentRgb,
         });
@@ -742,7 +792,7 @@
       y += rowHeight + GAP;
 
       overflow.forEach(({ key, lines }) => {
-        flowBoxLines(BOX_TITLES[key], lines, { startAsContinuation: true });
+        flowBoxLines(boxTitles[key], lines, { startAsContinuation: true });
       });
     }
 
@@ -762,23 +812,50 @@
       const keys = ["whereWeWin", "competitorChallenges", "customerReferences", "pricing"];
       const boxW = (pageWidth - MARGIN * 2 - GAP * (keys.length - 1)) / keys.length;
       const perBoxLines = keys.map((key) => buildPdfLines(key, run.boxes));
+      const talkingPointsW = boxW * 2 + GAP;
+      const talkingPointsAllLines = buildPdfLines("talkingPoints", run.boxes);
 
-      let rowHeight = 0;
-      perBoxLines.forEach((lines) => {
-        rowHeight = Math.max(rowHeight, boxHeightForLines(doc, lines, boxW));
+      // Ideal (uncapped) height each side of the row would need to show
+      // everything with zero overflow — used both for the pre-existing
+      // "how tall should this row start out" sizing and, below, to know
+      // how far it's worth growing the row toward the bottom of the page.
+      // Customer References / Pricing Overview and Key Talking Points
+      // only ever get HALF the row's height, so the row needs to be
+      // roughly twice as tall as either of those needs on its own.
+      let idealFullHeight = 0; // drives Where We Win / Competitor Considerations (full row height)
+      [perBoxLines[0], perBoxLines[1]].forEach((lines) => {
+        idealFullHeight = Math.max(idealFullHeight, boxHeightForLines(doc, lines, boxW));
       });
+      let idealHalfHeight = 0; // drives Customer References / Pricing Overview (half row height)
+      [perBoxLines[2], perBoxLines[3]].forEach((lines) => {
+        idealHalfHeight = Math.max(idealHalfHeight, boxHeightForLines(doc, lines, boxW));
+      });
+      const idealTalkingPointsHeight = boxHeightForLines(doc, talkingPointsAllLines, talkingPointsW);
+
       const maxFreshPageHeight = pageHeight - MARGIN * 2 - 40;
       // Floor: with the row split in two, each half still needs room for
       // its own title chrome plus a few lines, or Customer References /
       // Pricing Overview / the first Key Talking Points chunk would have
       // no usable space at all.
       const minRowHeight = 2 * (BOX_CHROME_TOP + BOX_BOTTOM_PAD + 20) + GAP;
-      rowHeight = Math.min(Math.max(rowHeight, minRowHeight), maxFreshPageHeight);
+      const idealRowHeight = Math.max(
+        idealFullHeight,
+        2 * idealHalfHeight,
+        2 * (idealTalkingPointsHeight + GAP),
+        minRowHeight
+      );
+      let rowHeight = Math.min(idealRowHeight, maxFreshPageHeight);
 
       if (y + rowHeight > pageHeight - MARGIN) {
         doc.addPage();
         y = drawContinuationHeader();
       }
+
+      // Grow toward the bottom of this page before giving up any content
+      // to a "(Cont.)" box — same rule as drawRow, and the main reason
+      // Key Talking Points used to be cramped even with blank page space
+      // left below it.
+      rowHeight = growRowHeightToFitPage(y, rowHeight, idealRowHeight);
 
       const rowY = y;
       const halfHeight = rowHeight / 2;
@@ -790,7 +867,7 @@
         const availableContentHeight = rowHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
         const { chunk, remaining } = splitLinesForHeight(doc, perBoxLines[i], boxW - BOX_PAD_X * 2, availableContentHeight);
         if (remaining.length > 0) overflow.push({ key, lines: remaining });
-        drawBox(doc, { x: MARGIN + i * (boxW + GAP), y: rowY, w: boxW, h: rowHeight, title: BOX_TITLES[key], lines: chunk, accentRgb });
+        drawBox(doc, { x: MARGIN + i * (boxW + GAP), y: rowY, w: boxW, h: rowHeight, title: boxTitles[key], lines: chunk, accentRgb });
       });
 
       // Customer References / Pricing Overview: half height.
@@ -799,13 +876,11 @@
         const availableContentHeight = halfHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
         const { chunk, remaining } = splitLinesForHeight(doc, perBoxLines[idx], boxW - BOX_PAD_X * 2, availableContentHeight);
         if (remaining.length > 0) overflow.push({ key, lines: remaining });
-        drawBox(doc, { x: MARGIN + idx * (boxW + GAP), y: rowY, w: boxW, h: halfHeight, title: BOX_TITLES[key], lines: chunk, accentRgb });
+        drawBox(doc, { x: MARGIN + idx * (boxW + GAP), y: rowY, w: boxW, h: halfHeight, title: boxTitles[key], lines: chunk, accentRgb });
       });
 
       // Key Talking Points: starts in the freed space below Customer
       // References + Pricing Overview, spanning both of their columns.
-      const talkingPointsAllLines = buildPdfLines("talkingPoints", run.boxes);
-      const talkingPointsW = boxW * 2 + GAP;
       const talkingPointsX = MARGIN + 2 * (boxW + GAP);
       const talkingPointsAvailableHeight = talkingPointsHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
       const { chunk: tpChunk, remaining: tpRemaining } = splitLinesForHeight(
@@ -819,7 +894,7 @@
         y: rowY + halfHeight + GAP,
         w: talkingPointsW,
         h: talkingPointsHeight,
-        title: BOX_TITLES.talkingPoints,
+        title: boxTitles.talkingPoints,
         lines: tpChunk,
         accentRgb,
       });
@@ -831,10 +906,10 @@
       // rest of Key Talking Points — spills into full-width "(Cont.)"
       // boxes right after the row, in reading order.
       overflow.forEach(({ key, lines }) => {
-        flowBoxLines(BOX_TITLES[key], lines, { startAsContinuation: true });
+        flowBoxLines(boxTitles[key], lines, { startAsContinuation: true });
       });
       if (tpRemaining.length > 0) {
-        flowBoxLines(BOX_TITLES.talkingPoints, tpRemaining, { startAsContinuation: true });
+        flowBoxLines(boxTitles.talkingPoints, tpRemaining, { startAsContinuation: true });
       }
     }
 
