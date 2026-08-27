@@ -137,9 +137,12 @@
       return;
     }
     el.removeAttribute("data-state");
-    el.innerHTML = `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
+    el.innerHTML = `<ol class="lettered-list">${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ol>`;
   }
 
+  // "initiativeLetter" ties a feature back to the lettered Top Prospect
+  // Initiatives list — rendered as a badge under the feature name (not
+  // beside the explanation copy), matching that same A/B/C/... lettering.
   function renderWinLoseTable(el, items, { competeFlag } = {}) {
     if (!items || items.length === 0) {
       emptyState(el);
@@ -149,7 +152,14 @@
     const rows = items
       .map((i) => {
         const compete = competeFlag && i.whereWeCompete ? '<div class="tag-compete">Where We Compete</div>' : "";
-        return `<tr><td><strong>${escapeHtml(i.feature)}</strong>${compete}</td><td>${escapeHtml(i.explanation)}</td></tr>`;
+        const badge = i.initiativeLetter
+          ? `<div class="initiative-badge" title="Ties to Top Prospect Initiative ${escapeHtml(
+              i.initiativeLetter
+            )}">${escapeHtml(i.initiativeLetter)}</div>`
+          : "";
+        return `<tr><td><strong>${escapeHtml(i.feature)}</strong>${badge}${compete}</td><td>${escapeHtml(
+          i.explanation
+        )}</td></tr>`;
       })
       .join("");
     el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
@@ -329,8 +339,15 @@
     );
   }
 
+  function indexToLetter(index) {
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 25) return null;
+    return String.fromCharCode(65 + index);
+  }
+
   // Builds the plain-text body lines for a given box, shared by the PDF
-  // renderer. Each line is { bold, text, gapAfter }.
+  // renderer. Each line is { bold, text, gapAfter }. Mirrors the on-page
+  // HTML rendering above so the PDF always shows the exact same content —
+  // it never truncates; buildPdf below paginates instead.
   function buildPdfLines(boxKey, boxes) {
     const lines = [];
     const push = (text, bold, gapAfter) => lines.push({ text, bold: !!bold, gapAfter: gapAfter || 4 });
@@ -350,13 +367,14 @@
     } else if (boxKey === "topInitiatives") {
       const items = boxes.topInitiatives || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((t) => push(`• ${t}`, false, 5));
+      items.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${t}`, false, 5));
     } else if (boxKey === "whereWeWin" || boxKey === "competitorChallenges") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
       items.forEach((i) => {
         const tag = boxKey === "competitorChallenges" && i.whereWeCompete ? "  [Where We Compete]" : "";
         push(`${i.feature}${tag}`, true, 2);
+        if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
         push(i.explanation, false, 6);
       });
     } else if (boxKey === "customerReferences") {
@@ -377,7 +395,36 @@
     return lines;
   }
 
-  // Draws one box (border + title + wrapped body lines, clipped to height).
+  // Chrome (title + divider) reserved at the top of every box, and a small
+  // bottom pad — used both to measure how tall a box needs to be and to
+  // know where its body text starts when actually drawing it.
+  const BOX_CHROME_TOP = 35;
+  const BOX_BOTTOM_PAD = 10;
+  const BOX_PAD_X = 10;
+
+  // Measures how tall a box needs to be to show ALL of `lines` without
+  // clipping, at the given content width. Used to size rows/boxes to their
+  // content instead of guessing a fixed height (which is what caused the
+  // PDF to cut boxes off after a few lines).
+  function measureContentHeight(doc, lines, maxWidth) {
+    let h = 0;
+    for (const line of lines) {
+      doc.setFont("helvetica", line.bold ? "bold" : "normal");
+      doc.setFontSize(8.5);
+      const wrapped = doc.splitTextToSize(line.text, maxWidth);
+      h += wrapped.length * 10 + line.gapAfter;
+    }
+    return h;
+  }
+
+  function boxHeightForLines(doc, lines, boxWidth) {
+    return BOX_CHROME_TOP + measureContentHeight(doc, lines, boxWidth - BOX_PAD_X * 2) + BOX_BOTTOM_PAD;
+  }
+
+  // Draws one box (border + title + wrapped body lines) at exactly the
+  // height passed in. `h` should already be sized to fit every line via
+  // boxHeightForLines/measureContentHeight — the clip-with-ellipsis path
+  // below is only a last-resort safety net, not the normal path.
   function drawBox(doc, { x, y, w, h, title, lines, accentRgb }) {
     doc.setDrawColor(226, 226, 230);
     doc.setLineWidth(0.75);
@@ -386,7 +433,7 @@
     doc.setFillColor(accentRgb[0], accentRgb[1], accentRgb[2]);
     doc.rect(x, y, w, 3, "F");
 
-    const pad = 10;
+    const pad = BOX_PAD_X;
     let cursorY = y + 3 + pad + 8;
     const maxWidth = w - pad * 2;
 
@@ -427,22 +474,33 @@
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 30;
+    const MARGIN = 30;
+    const GAP = 10;
     const accentRgb = hexToRgb(run.brandColor);
 
-    let y = margin;
+    let y = MARGIN;
 
-    // Logo (top-left), if available.
-    const titleStartX = margin;
+    // A slim running header stamped at the top of every page after the
+    // first (the first page gets the full title/info header below).
+    function drawContinuationHeader() {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(31, 32, 35);
+      doc.text(`Competitive Battle Card: ${run.competitorName} (continued)`, MARGIN, MARGIN + 10);
+      doc.setDrawColor(accentRgb[0], accentRgb[1], accentRgb[2]);
+      doc.setLineWidth(1.2);
+      doc.line(MARGIN, MARGIN + 18, pageWidth - MARGIN, MARGIN + 18);
+      return MARGIN + 32;
+    }
+
+    // Full title bar + logo + info strip — page 1 only.
     if (run.logoDataUri) {
       try {
-        doc.addImage(run.logoDataUri, titleStartX, y, 36, 36, undefined, "FAST");
+        doc.addImage(run.logoDataUri, MARGIN, y, 36, 36, undefined, "FAST");
       } catch (err) {
         // Unsupported format or corrupt data URI — silently skip the logo.
       }
     }
-
-    // Centered title bar.
     doc.setFont("helvetica", "bold");
     doc.setFontSize(20);
     doc.setTextColor(31, 32, 35);
@@ -451,10 +509,9 @@
 
     doc.setDrawColor(accentRgb[0], accentRgb[1], accentRgb[2]);
     doc.setLineWidth(2);
-    doc.line(margin, y, pageWidth - margin, y);
+    doc.line(MARGIN, y, pageWidth - MARGIN, y);
     y += 18;
 
-    // Info strip.
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
     doc.setTextColor(80, 81, 88);
@@ -466,59 +523,118 @@
       `Target Job Title: ${run.jobTitle}`,
       `Specified Industry: ${run.industry || "Unspecified"}`,
     ].join("    |    ");
-    doc.text(doc.splitTextToSize(infoLine, pageWidth - margin * 2), margin, y);
+    doc.text(doc.splitTextToSize(infoLine, pageWidth - MARGIN * 2), MARGIN, y);
     y += 26;
 
-    // 2 rows x 4 boxes, then one full-width box.
-    const gap = 10;
-    const cols = 4;
-    const boxW = (pageWidth - margin * 2 - gap * (cols - 1)) / cols;
-    const rowH = 150;
-    const talkingPointsH = pageHeight - y - rowH * 2 - gap * 2 - margin;
-
-    const row1Keys = ["competitorProduct", "ourFeatures", "theirFeatures", "topInitiatives"];
-    const row2Keys = ["whereWeWin", "competitorChallenges", "customerReferences", "pricing"];
-
-    row1Keys.forEach((key, i) => {
-      drawBox(doc, {
-        x: margin + i * (boxW + gap),
-        y,
-        w: boxW,
-        h: rowH,
-        title: BOX_TITLES[key],
-        lines: buildPdfLines(key, run.boxes),
-        accentRgb,
+    // Draws a row of equal-width boxes, sized to whichever box in the row
+    // needs the most room (so nothing in the row gets clipped), moving the
+    // WHOLE row to a fresh page first if it wouldn't fit on the current
+    // one. This is what lets the card span multiple pages instead of
+    // truncating.
+    function drawRow(keys) {
+      const boxW = (pageWidth - MARGIN * 2 - GAP * (keys.length - 1)) / keys.length;
+      const perBoxLines = keys.map((key) => buildPdfLines(key, run.boxes));
+      let rowHeight = 0;
+      perBoxLines.forEach((lines) => {
+        rowHeight = Math.max(rowHeight, boxHeightForLines(doc, lines, boxW));
       });
-    });
-    y += rowH + gap;
+      // Safety cap: never ask for a row taller than a full fresh page can
+      // hold, so a pathologically long response can't produce a box that
+      // literally never fits — drawBox's own clip is the last-resort net.
+      const maxFreshPageHeight = pageHeight - MARGIN * 2 - 40;
+      rowHeight = Math.min(rowHeight, maxFreshPageHeight);
 
-    row2Keys.forEach((key, i) => {
-      drawBox(doc, {
-        x: margin + i * (boxW + gap),
-        y,
-        w: boxW,
-        h: rowH,
-        title: BOX_TITLES[key],
-        lines: buildPdfLines(key, run.boxes),
-        accentRgb,
+      if (y + rowHeight > pageHeight - MARGIN) {
+        doc.addPage();
+        y = drawContinuationHeader();
+      }
+      keys.forEach((key, i) => {
+        drawBox(doc, {
+          x: MARGIN + i * (boxW + GAP),
+          y,
+          w: boxW,
+          h: rowHeight,
+          title: BOX_TITLES[key],
+          lines: perBoxLines[i],
+          accentRgb,
+        });
       });
-    });
-    y += rowH + gap;
+      y += rowHeight + GAP;
+    }
 
-    drawBox(doc, {
-      x: margin,
-      y,
-      w: pageWidth - margin * 2,
-      h: Math.max(talkingPointsH, 90),
-      title: BOX_TITLES.talkingPoints,
-      lines: buildPdfLines("talkingPoints", run.boxes),
-      accentRgb,
-    });
+    // Draws one full-width box that can flow across as many pages as its
+    // content needs — used for Key Talking Points, the box most likely to
+    // run long (up to 5 Q&A pairs). Each page gets as much of the content
+    // as fits; anything left over continues in a "(continued)" box on the
+    // next page, so nothing is ever cut from the PDF.
+    function drawFlowingFullWidthBox(title, allLines) {
+      const w = pageWidth - MARGIN * 2;
+      let remaining = allLines.slice();
+      let first = true;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(150, 150, 155);
-    doc.text(`Generated by Instant Battle Card Generator`, pageWidth - margin, pageHeight - 12, { align: "right" });
+      while (remaining.length > 0) {
+        const availableOnPage = pageHeight - MARGIN - y;
+        if (availableOnPage < BOX_CHROME_TOP + BOX_BOTTOM_PAD + 40) {
+          doc.addPage();
+          y = drawContinuationHeader();
+          continue;
+        }
+        const usable = availableOnPage - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
+
+        let consumedHeight = 0;
+        let consumedCount = 0;
+        for (let i = 0; i < remaining.length; i += 1) {
+          const line = remaining[i];
+          doc.setFont("helvetica", line.bold ? "bold" : "normal");
+          doc.setFontSize(8.5);
+          const wrapped = doc.splitTextToSize(line.text, w - BOX_PAD_X * 2);
+          const lineHeight = wrapped.length * 10 + line.gapAfter;
+          if (consumedCount > 0 && consumedHeight + lineHeight > usable) break;
+          consumedHeight += lineHeight;
+          consumedCount += 1;
+        }
+        // Always make progress, even if a single line is taller than the
+        // remaining space on this page (drawBox's clip covers that edge case).
+        if (consumedCount === 0) consumedCount = 1;
+
+        const chunk = remaining.slice(0, consumedCount);
+        remaining = remaining.slice(consumedCount);
+        const boxH = BOX_CHROME_TOP + consumedHeight + BOX_BOTTOM_PAD;
+
+        drawBox(doc, {
+          x: MARGIN,
+          y,
+          w,
+          h: boxH,
+          title: first ? title : `${title} (continued)`,
+          lines: chunk,
+          accentRgb,
+        });
+        y += boxH + GAP;
+        first = false;
+
+        if (remaining.length > 0) {
+          doc.addPage();
+          y = drawContinuationHeader();
+        }
+      }
+    }
+
+    // 2 rows of 4 boxes, then one full-width flowing box for Key Talking Points.
+    drawRow(["competitorProduct", "ourFeatures", "theirFeatures", "topInitiatives"]);
+    drawRow(["whereWeWin", "competitorChallenges", "customerReferences", "pricing"]);
+    drawFlowingFullWidthBox(BOX_TITLES.talkingPoints, buildPdfLines("talkingPoints", run.boxes));
+
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i += 1) {
+      doc.setPage(i);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(150, 150, 155);
+      doc.text(`Instant Battle Card Generator — Page ${i} of ${pageCount}`, pageWidth - MARGIN, pageHeight - 12, {
+        align: "right",
+      });
+    }
 
     doc.save(`battle-card-${slugify(run.competitorName)}.pdf`);
   }

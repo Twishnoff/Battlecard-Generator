@@ -226,13 +226,33 @@ body {
   background: var(--row-alt);
 }
 
-.box-body ul {
+.box-body ul,
+.box-body ol {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 20px;
 }
 
 .box-body li {
   margin-bottom: 6px;
+}
+
+.box-body .lettered-list {
+  list-style-type: upper-alpha;
+}
+
+.box-body .initiative-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 5px;
+  border-radius: 6px;
+  background: rgba(47, 111, 235, 0.12);
+  color: var(--accent-dark);
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .box-body .kv-line {
