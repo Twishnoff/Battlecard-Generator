@@ -319,6 +319,14 @@
   // title bar, an info strip, 2 rows of 4 boxes, and one full-width box
   // for Key Talking Points. Drawn directly with jsPDF (not a table lib)
   // since this is a card grid, not tabular data.
+  //
+  // PDF-only copy rule: every prose copy block (an answer, an
+  // explanation, a description, ...) is capped at 280 characters here —
+  // see PDF_COPY_LIMIT/pdfCopy below — even though the on-page HTML above
+  // shows the full, uncapped copy. And if a box still has more copy than
+  // fits on one page even after that cap (e.g. 10 Top Initiatives), the
+  // rest spills into a same-named "[Box Title] (Cont.)" box rather than
+  // getting clipped — see flowBoxLines below.
 
   function hexToRgb(hex) {
     const clean = (hex || "#2F6FEB").replace("#", "");
@@ -344,10 +352,42 @@
     return String.fromCharCode(65 + index);
   }
 
+  // PDF-only rule: no single copy block (an answer, an explanation, a
+  // description, etc.) may exceed 280 characters in the exported PDF, even
+  // though the on-page HTML above shows the full, uncapped copy. The
+  // backend is asked to hand back an already-condensed "<field>ForPdf"
+  // version of every prose field (a real rewrite that keeps the strongest
+  // proof point, not a mid-sentence cut), and every call site below prefers
+  // that field. capTo280 is the client-side safety net for whatever slips
+  // through uncapped (an older cached run, a field the model skipped, or a
+  // condensed version that still came back slightly over budget) — it
+  // trims to the last full sentence under the limit, falling back to the
+  // last full word, so a box never gets cut off mid-word.
+  const PDF_COPY_LIMIT = 280;
+
+  function capTo280(text) {
+    const t = String(text == null ? "" : text).trim();
+    if (t.length <= PDF_COPY_LIMIT) return t;
+    const slice = t.slice(0, PDF_COPY_LIMIT);
+    const lastSentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
+    if (lastSentenceEnd > PDF_COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
+    const lastSpace = slice.lastIndexOf(" ");
+    const base = lastSpace > PDF_COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, PDF_COPY_LIMIT - 1);
+    return `${base.trim()}…`;
+  }
+
+  // Prefers the backend's condensed "ForPdf" copy for a field, falling back
+  // to a locally-capped version of the full copy when it's missing.
+  function pdfCopy(condensed, full) {
+    return capTo280(condensed || full);
+  }
+
   // Builds the plain-text body lines for a given box, shared by the PDF
   // renderer. Each line is { bold, text, gapAfter }. Mirrors the on-page
-  // HTML rendering above so the PDF always shows the exact same content —
-  // it never truncates; buildPdf below paginates instead.
+  // HTML rendering above, except every prose copy block is capped to 280
+  // characters (see PDF_COPY_LIMIT above) — the on-page HTML always shows
+  // the full, uncapped copy. buildPdf below paginates on top of that, and
+  // overflows any box that still doesn't fit into a "(Cont.)" box.
   function buildPdfLines(boxKey, boxes) {
     const lines = [];
     const push = (text, bold, gapAfter) => lines.push({ text, bold: !!bold, gapAfter: gapAfter || 4 });
@@ -355,19 +395,22 @@
     if (boxKey === "competitorProduct") {
       const cp = boxes.competitorProduct || {};
       push(`Competitor Name: ${cp.competitorName || "—"}`, false, 6);
-      push(`Value Proposition: ${cp.valueProposition || "—"}`, false, 6);
-      push(`Primary Products: ${cp.primaryProducts || "—"}`, false, 6);
+      push(`Value Proposition: ${pdfCopy(cp.valuePropositionForPdf, cp.valueProposition) || "—"}`, false, 6);
+      push(`Primary Products: ${pdfCopy(cp.primaryProductsForPdf, cp.primaryProducts) || "—"}`, false, 6);
     } else if (boxKey === "ourFeatures" || boxKey === "theirFeatures") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
       items.forEach((i) => {
         push(i.name, true, 2);
-        push(i.description, false, 6);
+        push(pdfCopy(i.descriptionForPdf, i.description), false, 6);
       });
     } else if (boxKey === "topInitiatives") {
       const items = boxes.topInitiatives || [];
+      const pdfItems = boxes.topInitiativesForPdf || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${t}`, false, 5));
+      items.forEach((t, idx) =>
+        push(`${indexToLetter(idx) || idx + 1}. ${pdfCopy(pdfItems[idx], t)}`, false, 5)
+      );
     } else if (boxKey === "whereWeWin" || boxKey === "competitorChallenges") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
@@ -375,7 +418,7 @@
         const tag = boxKey === "competitorChallenges" && i.whereWeCompete ? "  [Where We Compete]" : "";
         push(`${i.feature}${tag}`, true, 2);
         if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
-        push(i.explanation, false, 6);
+        push(pdfCopy(i.explanationForPdf, i.explanation), false, 6);
       });
     } else if (boxKey === "customerReferences") {
       const items = boxes.customerReferences || [];
@@ -383,13 +426,13 @@
       items.forEach((i) => push(`• ${i.name}${i.inIndustry ? "  (In Industry)" : ""}`, false, 5));
     } else if (boxKey === "pricing") {
       const p = boxes.pricing || {};
-      push(p.summary || "Refer to internal documentation for pricing.", false, 6);
+      push(pdfCopy(p.summaryForPdf, p.summary) || "Refer to internal documentation for pricing.", false, 6);
     } else if (boxKey === "talkingPoints") {
       const items = boxes.talkingPoints || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
       items.forEach((i) => {
         push(`Q: ${i.question}`, true, 2);
-        push(`A: ${i.answer}`, false, 8);
+        push(`A: ${pdfCopy(i.answerForPdf, i.answer)}`, false, 8);
       });
     }
     return lines;
@@ -419,6 +462,34 @@
 
   function boxHeightForLines(doc, lines, boxWidth) {
     return BOX_CHROME_TOP + measureContentHeight(doc, lines, boxWidth - BOX_PAD_X * 2) + BOX_BOTTOM_PAD;
+  }
+
+  // Given a budget of vertical space, returns as many leading `lines` as
+  // fit (`chunk`) and whatever's left over (`remaining`). Shared by the
+  // grid rows (splitting a box's content at its row's height) and the
+  // full-width flowing box (splitting at whatever's left on the page) —
+  // both need the exact same "how much fits" measurement.
+  function splitLinesForHeight(doc, lines, maxWidth, availableHeight) {
+    let consumedHeight = 0;
+    let consumedCount = 0;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      doc.setFont("helvetica", line.bold ? "bold" : "normal");
+      doc.setFontSize(8.5);
+      const wrapped = doc.splitTextToSize(line.text, maxWidth);
+      const lineHeight = wrapped.length * 10 + line.gapAfter;
+      if (consumedCount > 0 && consumedHeight + lineHeight > availableHeight) break;
+      consumedHeight += lineHeight;
+      consumedCount += 1;
+    }
+    // Always make progress, even if a single line is taller than the
+    // available space (drawBox's own clip is the last-resort safety net).
+    if (consumedCount === 0 && lines.length > 0) consumedCount = 1;
+    return {
+      chunk: lines.slice(0, consumedCount),
+      remaining: lines.slice(consumedCount),
+      consumedHeight,
+    };
   }
 
   // Draws one box (border + title + wrapped body lines) at exactly the
@@ -526,51 +597,21 @@
     doc.text(doc.splitTextToSize(infoLine, pageWidth - MARGIN * 2), MARGIN, y);
     y += 26;
 
-    // Draws a row of equal-width boxes, sized to whichever box in the row
-    // needs the most room (so nothing in the row gets clipped), moving the
-    // WHOLE row to a fresh page first if it wouldn't fit on the current
-    // one. This is what lets the card span multiple pages instead of
-    // truncating.
-    function drawRow(keys) {
-      const boxW = (pageWidth - MARGIN * 2 - GAP * (keys.length - 1)) / keys.length;
-      const perBoxLines = keys.map((key) => buildPdfLines(key, run.boxes));
-      let rowHeight = 0;
-      perBoxLines.forEach((lines) => {
-        rowHeight = Math.max(rowHeight, boxHeightForLines(doc, lines, boxW));
-      });
-      // Safety cap: never ask for a row taller than a full fresh page can
-      // hold, so a pathologically long response can't produce a box that
-      // literally never fits — drawBox's own clip is the last-resort net.
-      const maxFreshPageHeight = pageHeight - MARGIN * 2 - 40;
-      rowHeight = Math.min(rowHeight, maxFreshPageHeight);
-
-      if (y + rowHeight > pageHeight - MARGIN) {
-        doc.addPage();
-        y = drawContinuationHeader();
-      }
-      keys.forEach((key, i) => {
-        drawBox(doc, {
-          x: MARGIN + i * (boxW + GAP),
-          y,
-          w: boxW,
-          h: rowHeight,
-          title: BOX_TITLES[key],
-          lines: perBoxLines[i],
-          accentRgb,
-        });
-      });
-      y += rowHeight + GAP;
-    }
-
     // Draws one full-width box that can flow across as many pages as its
-    // content needs — used for Key Talking Points, the box most likely to
-    // run long (up to 5 Q&A pairs). Each page gets as much of the content
-    // as fits; anything left over continues in a "(continued)" box on the
-    // next page, so nothing is ever cut from the PDF.
-    function drawFlowingFullWidthBox(title, allLines) {
+    // content needs. Used both for Key Talking Points (which is always
+    // laid out this way, since it's the box most likely to run long) and
+    // for any grid-row box below whose content didn't fit within its
+    // row's height. Each page/box gets as much of the content as fits;
+    // anything left over continues in a "[title] (Cont.)" box, so nothing
+    // is ever cut from the PDF. Pass `startAsContinuation: true` when the
+    // content being flowed is itself the leftover from a box drawn
+    // elsewhere (a grid-row box) — that titles every box this call draws,
+    // including the first, "(Cont.)" rather than only from the second one
+    // onward.
+    function flowBoxLines(title, allLines, { startAsContinuation = false } = {}) {
       const w = pageWidth - MARGIN * 2;
       let remaining = allLines.slice();
-      let first = true;
+      let first = !startAsContinuation;
 
       while (remaining.length > 0) {
         const availableOnPage = pageHeight - MARGIN - y;
@@ -580,25 +621,13 @@
           continue;
         }
         const usable = availableOnPage - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
-
-        let consumedHeight = 0;
-        let consumedCount = 0;
-        for (let i = 0; i < remaining.length; i += 1) {
-          const line = remaining[i];
-          doc.setFont("helvetica", line.bold ? "bold" : "normal");
-          doc.setFontSize(8.5);
-          const wrapped = doc.splitTextToSize(line.text, w - BOX_PAD_X * 2);
-          const lineHeight = wrapped.length * 10 + line.gapAfter;
-          if (consumedCount > 0 && consumedHeight + lineHeight > usable) break;
-          consumedHeight += lineHeight;
-          consumedCount += 1;
-        }
-        // Always make progress, even if a single line is taller than the
-        // remaining space on this page (drawBox's clip covers that edge case).
-        if (consumedCount === 0) consumedCount = 1;
-
-        const chunk = remaining.slice(0, consumedCount);
-        remaining = remaining.slice(consumedCount);
+        const { chunk, remaining: rest, consumedHeight } = splitLinesForHeight(
+          doc,
+          remaining,
+          w - BOX_PAD_X * 2,
+          usable
+        );
+        remaining = rest;
         const boxH = BOX_CHROME_TOP + consumedHeight + BOX_BOTTOM_PAD;
 
         drawBox(doc, {
@@ -606,7 +635,7 @@
           y,
           w,
           h: boxH,
-          title: first ? title : `${title} (continued)`,
+          title: first ? title : `${title} (Cont.)`,
           lines: chunk,
           accentRgb,
         });
@@ -620,10 +649,69 @@
       }
     }
 
-    // 2 rows of 4 boxes, then one full-width flowing box for Key Talking Points.
+    // Draws a row of equal-width boxes, sized to whichever box in the row
+    // needs the most room, capped at a full fresh page's height, moving
+    // the WHOLE row to a fresh page first if it wouldn't fit on the
+    // current one. Any box whose content still doesn't fit within that
+    // height (a copy block hit the 280-character cap but there were still
+    // too many of them to fit — e.g. 10 Top Initiatives) has its overflow
+    // spilled into its own full-width "[Box Title] (Cont.)" box right
+    // after the row, via flowBoxLines — so nothing in the PDF ever gets
+    // clipped.
+    function drawRow(keys) {
+      const boxW = (pageWidth - MARGIN * 2 - GAP * (keys.length - 1)) / keys.length;
+      const perBoxLines = keys.map((key) => buildPdfLines(key, run.boxes));
+      let rowHeight = 0;
+      perBoxLines.forEach((lines) => {
+        rowHeight = Math.max(rowHeight, boxHeightForLines(doc, lines, boxW));
+      });
+      // Safety cap: never ask for a row taller than a full fresh page can
+      // hold — drawBox's own ellipsis clip is only the last-resort net for
+      // a single line taller than an entire fresh page.
+      const maxFreshPageHeight = pageHeight - MARGIN * 2 - 40;
+      rowHeight = Math.min(rowHeight, maxFreshPageHeight);
+
+      if (y + rowHeight > pageHeight - MARGIN) {
+        doc.addPage();
+        y = drawContinuationHeader();
+      }
+
+      const availableContentHeight = rowHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
+      const overflow = []; // { key, lines } for any box that didn't fully fit at rowHeight
+      const chunks = keys.map((key, i) => {
+        const { chunk, remaining } = splitLinesForHeight(
+          doc,
+          perBoxLines[i],
+          boxW - BOX_PAD_X * 2,
+          availableContentHeight
+        );
+        if (remaining.length > 0) overflow.push({ key, lines: remaining });
+        return chunk;
+      });
+
+      keys.forEach((key, i) => {
+        drawBox(doc, {
+          x: MARGIN + i * (boxW + GAP),
+          y,
+          w: boxW,
+          h: rowHeight,
+          title: BOX_TITLES[key],
+          lines: chunks[i],
+          accentRgb,
+        });
+      });
+      y += rowHeight + GAP;
+
+      overflow.forEach(({ key, lines }) => {
+        flowBoxLines(BOX_TITLES[key], lines, { startAsContinuation: true });
+      });
+    }
+
+    // 2 rows of 4 boxes (each spilling into its own "(Cont.)" box(es) if it
+    // runs long), then one full-width flowing box for Key Talking Points.
     drawRow(["competitorProduct", "ourFeatures", "theirFeatures", "topInitiatives"]);
     drawRow(["whereWeWin", "competitorChallenges", "customerReferences", "pricing"]);
-    drawFlowingFullWidthBox(BOX_TITLES.talkingPoints, buildPdfLines("talkingPoints", run.boxes));
+    flowBoxLines(BOX_TITLES.talkingPoints, buildPdfLines("talkingPoints", run.boxes));
 
     const pageCount = doc.internal.getNumberOfPages();
     for (let i = 1; i <= pageCount; i += 1) {

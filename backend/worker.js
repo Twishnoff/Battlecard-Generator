@@ -334,16 +334,19 @@ Return ONLY a single JSON object (no prose before or after, no markdown code fen
     "competitorProduct": {
       "competitorName": "...",
       "valueProposition": "...",
-      "primaryProducts": "..."
+      "valuePropositionForPdf": "...",
+      "primaryProducts": "...",
+      "primaryProductsForPdf": "..."
     },
-    "ourFeatures": [ { "name": "...", "description": "..." } ],
-    "theirFeatures": [ { "name": "...", "description": "..." } ],
+    "ourFeatures": [ { "name": "...", "description": "...", "descriptionForPdf": "..." } ],
+    "theirFeatures": [ { "name": "...", "description": "...", "descriptionForPdf": "..." } ],
     "topInitiatives": [ "..." ],
-    "whereWeWin": [ { "feature": "...", "explanation": "...", "relatedInitiativeIndex": 0 } ],
-    "competitorChallenges": [ { "feature": "...", "explanation": "...", "whereWeCompete": false, "relatedInitiativeIndex": 0 } ],
+    "topInitiativesForPdf": [ "..." ],
+    "whereWeWin": [ { "feature": "...", "explanation": "...", "explanationForPdf": "...", "relatedInitiativeIndex": 0 } ],
+    "competitorChallenges": [ { "feature": "...", "explanation": "...", "explanationForPdf": "...", "whereWeCompete": false, "relatedInitiativeIndex": 0 } ],
     "customerReferences": [ { "name": "...", "inIndustry": false } ],
-    "talkingPoints": [ { "question": "...", "answer": "..." } ],
-    "pricing": { "summary": "...", "isPlaceholder": false }
+    "talkingPoints": [ { "question": "...", "answer": "...", "answerForPdf": "..." } ],
+    "pricing": { "summary": "...", "summaryForPdf": "...", "isPlaceholder": false }
   }
 }
 
@@ -370,7 +373,9 @@ Rules for each field:
 
 - "boxes.pricing": "summary" summarizes any pricing explicitly published on the COMPANY's (Company URL) website, focused on the products/features relevant to the Job Title if pricing is broken out by product. If the website only directs visitors to contact sales (no public pricing), set "summary" to exactly "Refer to internal documentation for pricing." and "isPlaceholder": true. Otherwise "isPlaceholder": false.
 
-All object/array fields must always be present (use an empty array/short placeholder string rather than omitting a key). Do not pad any list with weak/irrelevant items just to fill a quota — fewer strong items beats more weak ones, but always try to reach the stated counts where good candidates genuinely exist.`;
+All object/array fields must always be present (use an empty array/short placeholder string rather than omitting a key). Do not pad any list with weak/irrelevant items just to fill a quota — fewer strong items beats more weak ones, but always try to reach the stated counts where good candidates genuinely exist.
+
+- PDF-condensed copy ("...ForPdf" fields): this tool also exports a printable PDF version of the battle card that has much less room per box than the webpage, so for every prose field above you must ALSO return a second version of it, using the exact same field name with "ForPdf" appended, condensed to 280 characters or fewer (counting spaces and punctuation): "boxes.competitorProduct.valuePropositionForPdf", "boxes.competitorProduct.primaryProductsForPdf", each "ourFeatures"/"theirFeatures" item's "descriptionForPdf", "boxes.topInitiativesForPdf" (a parallel array to "topInitiatives" — same length, same order, one condensed string per initiative), each "whereWeWin"/"competitorChallenges" item's "explanationForPdf", each "talkingPoints" item's "answerForPdf", and "boxes.pricing.summaryForPdf". These must be genuine rewrites, not truncations: compress the wording so it fits under 280 characters while keeping the single strongest claim or proof point (a concrete number, a name, a specific outcome) intact, rather than cutting the sentence off wherever the limit lands. Do not pad a condensed field with filler to approach the limit — shorter is fine as long as the core point survives. If a full-length field above is already 280 characters or fewer, its "ForPdf" counterpart can just repeat it. "customerReferences" names need no condensed counterpart. The full-length fields above are unaffected by this rule and are what the webpage displays, which has no length limit.`;
 
   const user = `Company URL (the account executive's own company — the seller): ${companyUrl}
 Homepage snapshot (may be incomplete — use web search for more):
@@ -453,6 +458,38 @@ function boolVal(v) {
   return v === true;
 }
 
+// ---------------------------------------------------------------------
+// PDF-only 280-character copy cap. The model is asked (see buildPrompt)
+// to hand back an already-condensed "<field>ForPdf" version of every
+// prose field — a real rewrite that keeps the strongest proof point, not
+// a mid-sentence cut. capTo280 is the safety net for whatever slips
+// through uncapped (the model skips a field, or its condensed version
+// still comes back slightly over budget): it trims to the last full
+// sentence under the limit, falling back to the last full word, so
+// nothing gets cut off mid-word. The website rendering (app.js
+// renderResults) is unaffected — it always uses the uncapped fields.
+// ---------------------------------------------------------------------
+
+const PDF_COPY_LIMIT = 280;
+
+function capTo280(text) {
+  const t = (text || "").trim();
+  if (t.length <= PDF_COPY_LIMIT) return t;
+  const slice = t.slice(0, PDF_COPY_LIMIT);
+  const lastSentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
+  if (lastSentenceEnd > PDF_COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
+  const lastSpace = slice.lastIndexOf(" ");
+  const base = lastSpace > PDF_COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, PDF_COPY_LIMIT - 1);
+  return `${base.trim()}…`;
+}
+
+// Prefers the model's condensed "<field>ForPdf" value; falls back to a
+// locally-capped version of the full field when the model omitted it.
+// Either way the result is guaranteed <= PDF_COPY_LIMIT characters.
+function pdfCopy(condensed, full) {
+  return capTo280(str(condensed, full));
+}
+
 // A=0, B=1, ... matches the frontend's upper-alpha lettered list for
 // topInitiatives, so a "relatedInitiativeIndex" from the model can be
 // turned into the same letter shown on that list.
@@ -464,25 +501,42 @@ function indexToLetter(index) {
 function sanitizeBoxes(raw, competitorNameFallback) {
   const boxes = (raw && raw.boxes) || {};
 
+  const competitorProductRaw = boxes.competitorProduct || {};
+  const valueProposition = str(competitorProductRaw.valueProposition, "");
+  const primaryProducts = str(competitorProductRaw.primaryProducts, "");
   const competitorProduct = {
-    competitorName: str(boxes.competitorProduct && boxes.competitorProduct.competitorName, competitorNameFallback),
-    valueProposition: str(boxes.competitorProduct && boxes.competitorProduct.valueProposition, ""),
-    primaryProducts: str(boxes.competitorProduct && boxes.competitorProduct.primaryProducts, ""),
+    competitorName: str(competitorProductRaw.competitorName, competitorNameFallback),
+    valueProposition,
+    valuePropositionForPdf: pdfCopy(competitorProductRaw.valuePropositionForPdf, valueProposition),
+    primaryProducts,
+    primaryProductsForPdf: pdfCopy(competitorProductRaw.primaryProductsForPdf, primaryProducts),
   };
 
   const featureList = (list) =>
     (Array.isArray(list) ? list : [])
       .filter((i) => i && str(i.name))
       .slice(0, 5)
-      .map((i) => ({ name: str(i.name), description: str(i.description) }));
+      .map((i) => {
+        const description = str(i.description);
+        return { name: str(i.name), description, descriptionForPdf: pdfCopy(i.descriptionForPdf, description) };
+      });
 
   const ourFeatures = featureList(boxes.ourFeatures);
   const theirFeatures = featureList(boxes.theirFeatures);
 
-  const topInitiatives = (Array.isArray(boxes.topInitiatives) ? boxes.topInitiatives : [])
-    .map((i) => (typeof i === "string" ? i.trim() : str(i && i.text)))
-    .filter(Boolean)
+  // Paired by index against the raw (pre-filter) arrays so the PDF-copy
+  // array stays aligned with topInitiatives after filtering/slicing.
+  const rawInitiatives = Array.isArray(boxes.topInitiatives) ? boxes.topInitiatives : [];
+  const rawInitiativesForPdf = Array.isArray(boxes.topInitiativesForPdf) ? boxes.topInitiativesForPdf : [];
+  const initiativePairs = rawInitiatives
+    .map((i, idx) => {
+      const text = typeof i === "string" ? i.trim() : str(i && i.text);
+      return { text, pdfText: pdfCopy(rawInitiativesForPdf[idx], text) };
+    })
+    .filter((pair) => pair.text)
     .slice(0, 10);
+  const topInitiatives = initiativePairs.map((pair) => pair.text);
+  const topInitiativesForPdf = initiativePairs.map((pair) => pair.pdfText);
 
   // Valid range for relatedInitiativeIndex depends on the (already
   // sanitized) topInitiatives length, so this must run after that array
@@ -497,18 +551,30 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     (Array.isArray(list) ? list : [])
       .filter((i) => i && str(i.feature))
       .slice(0, 5)
-      .map((i) => ({ feature: str(i.feature), explanation: str(i.explanation), initiativeLetter: initiativeLetterFor(i) }));
+      .map((i) => {
+        const explanation = str(i.explanation);
+        return {
+          feature: str(i.feature),
+          explanation,
+          explanationForPdf: pdfCopy(i.explanationForPdf, explanation),
+          initiativeLetter: initiativeLetterFor(i),
+        };
+      });
 
   const whereWeWin = winList(boxes.whereWeWin);
   const competitorChallenges = (Array.isArray(boxes.competitorChallenges) ? boxes.competitorChallenges : [])
     .filter((i) => i && str(i.feature))
     .slice(0, 5)
-    .map((i) => ({
-      feature: str(i.feature),
-      explanation: str(i.explanation),
-      whereWeCompete: boolVal(i.whereWeCompete),
-      initiativeLetter: initiativeLetterFor(i),
-    }));
+    .map((i) => {
+      const explanation = str(i.explanation);
+      return {
+        feature: str(i.feature),
+        explanation,
+        explanationForPdf: pdfCopy(i.explanationForPdf, explanation),
+        whereWeCompete: boolVal(i.whereWeCompete),
+        initiativeLetter: initiativeLetterFor(i),
+      };
+    });
 
   const customerReferences = (Array.isArray(boxes.customerReferences) ? boxes.customerReferences : [])
     .filter((i) => i && str(i.name))
@@ -518,11 +584,16 @@ function sanitizeBoxes(raw, competitorNameFallback) {
   const talkingPoints = (Array.isArray(boxes.talkingPoints) ? boxes.talkingPoints : [])
     .filter((i) => i && str(i.question) && str(i.answer))
     .slice(0, 5)
-    .map((i) => ({ question: str(i.question), answer: str(i.answer) }));
+    .map((i) => {
+      const answer = str(i.answer);
+      return { question: str(i.question), answer, answerForPdf: pdfCopy(i.answerForPdf, answer) };
+    });
 
   const pricingRaw = boxes.pricing || {};
+  const summary = str(pricingRaw.summary, "Refer to internal documentation for pricing.");
   const pricing = {
-    summary: str(pricingRaw.summary, "Refer to internal documentation for pricing."),
+    summary,
+    summaryForPdf: pdfCopy(pricingRaw.summaryForPdf, summary),
     isPlaceholder: pricingRaw.isPlaceholder === true || !str(pricingRaw.summary),
   };
 
@@ -531,6 +602,7 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     ourFeatures,
     theirFeatures,
     topInitiatives,
+    topInitiativesForPdf,
     whereWeWin,
     competitorChallenges,
     customerReferences,
