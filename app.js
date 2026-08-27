@@ -15,7 +15,7 @@
     theirFeatures: "Their Key Features",
     topInitiatives: "Top Prospect Initiatives",
     whereWeWin: "Where We Win",
-    competitorChallenges: "Competitor Challenges",
+    competitorChallenges: "Competitor Considerations",
     customerReferences: "Customer References",
     talkingPoints: "Key Talking Points",
     pricing: "Pricing Overview",
@@ -114,8 +114,8 @@
     el.removeAttribute("data-state");
     el.innerHTML = `
       <div class="kv-line"><span class="kv-label">Competitor Name:</span> ${escapeHtml(cp.competitorName || "—")}</div>
-      <div class="kv-line"><span class="kv-label">Value Proposition:</span> ${escapeHtml(cp.valueProposition || "—")}</div>
-      <div class="kv-line"><span class="kv-label">Primary Products:</span> ${escapeHtml(cp.primaryProducts || "—")}</div>
+      <div class="kv-line"><span class="kv-label">Value Proposition:</span> ${escapeHtml(capToLimit(cp.valueProposition) || "—")}</div>
+      <div class="kv-line"><span class="kv-label">Primary Products:</span> ${escapeHtml(capToLimit(cp.primaryProducts) || "—")}</div>
     `;
   }
 
@@ -126,23 +126,37 @@
     }
     el.removeAttribute("data-state");
     const rows = items
-      .map((i) => `<tr><td><strong>${escapeHtml(i.name)}</strong></td><td>${escapeHtml(i.description)}</td></tr>`)
+      .map((i) => `<tr><td><strong>${escapeHtml(i.name)}</strong></td><td>${escapeHtml(capToLimit(i.description))}</td></tr>`)
       .join("");
     el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
   }
 
+  // Letters use the same bold-boxed treatment as the Where We Win /
+  // Competitor Considerations badges (.initiative-badge) — here they sit
+  // to the left of each initiative as a marker, since this box has no
+  // separate "feature name" line for a badge to sit below.
   function renderInitiatives(el, items) {
     if (!items || items.length === 0) {
       emptyState(el);
       return;
     }
     el.removeAttribute("data-state");
-    el.innerHTML = `<ol class="lettered-list">${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ol>`;
+    el.innerHTML = items
+      .map((t, idx) => {
+        const letter = indexToLetter(idx) || String(idx + 1);
+        return `<div class="initiative-item"><div class="initiative-badge">${escapeHtml(
+          letter
+        )}</div><div class="initiative-copy">${escapeHtml(capToLimit(t))}</div></div>`;
+      })
+      .join("");
   }
 
   // "initiativeLetter" ties a feature back to the lettered Top Prospect
-  // Initiatives list — rendered as a badge under the feature name (not
-  // beside the explanation copy), matching that same A/B/C/... lettering.
+  // Initiatives list. The feature name, its letter badge, and (for
+  // Competitor Considerations) the "Where We Compete" tag are stacked in
+  // a centered column (.feature-cell) below the feature name itself, per
+  // the layout spec — the letter badge is drawn twice the size used
+  // elsewhere (see .feature-cell .initiative-badge in style.css).
   function renderWinLoseTable(el, items, { competeFlag } = {}) {
     if (!items || items.length === 0) {
       emptyState(el);
@@ -157,14 +171,18 @@
               i.initiativeLetter
             )}">${escapeHtml(i.initiativeLetter)}</div>`
           : "";
-        return `<tr><td><strong>${escapeHtml(i.feature)}</strong>${badge}${compete}</td><td>${escapeHtml(
-          i.explanation
-        )}</td></tr>`;
+        return `<tr><td><div class="feature-cell"><strong>${escapeHtml(
+          i.feature
+        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(capToLimit(i.explanation))}</td></tr>`;
       })
       .join("");
     el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
   }
 
+  // Right-hand column links to the one proof point (a case study if one
+  // exists, otherwise any page that names them as a customer) that backs
+  // up each reference — so "Customer References" isn't just a list of
+  // names with nothing behind them.
   function renderCustomerReferences(el, items) {
     if (!items || items.length === 0) {
       emptyState(el);
@@ -174,10 +192,15 @@
     const rows = items
       .map((i) => {
         const tag = i.inIndustry ? '<span class="tag-in-industry">In Industry</span>' : "";
-        return `<tr><td>${escapeHtml(i.name)}${tag}</td></tr>`;
+        const link = i.referenceUrl
+          ? `<a class="reference-link" href="${escapeHtml(i.referenceUrl)}" target="_blank" rel="noopener noreferrer">${
+              i.referenceType === "case_study" ? "Case Study" : "Reference"
+            }</a>`
+          : '<span class="reference-none">—</span>';
+        return `<tr><td>${escapeHtml(i.name)}${tag}</td><td>${link}</td></tr>`;
       })
       .join("");
-    el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
+    el.innerHTML = `<table class="ref-table"><tbody>${rows}</tbody></table>`;
   }
 
   function renderTalkingPoints(el, items) {
@@ -190,7 +213,7 @@
       .map(
         (i) =>
           `<div class="qa-item"><div class="qa-q">Q: ${escapeHtml(i.question)}</div><div class="qa-a">A: ${escapeHtml(
-            i.answer
+            capToLimit(i.answer)
           )}</div></div>`
       )
       .join("");
@@ -204,7 +227,7 @@
     }
     el.removeAttribute("data-state");
     const cls = p.isPlaceholder ? "placeholder-text" : "";
-    el.innerHTML = `<div class="${cls}">${escapeHtml(p.summary)}</div>`;
+    el.innerHTML = `<div class="${cls}">${escapeHtml(capToLimit(p.summary))}</div>`;
   }
 
   function renderResults(data) {
@@ -320,13 +343,14 @@
   // for Key Talking Points. Drawn directly with jsPDF (not a table lib)
   // since this is a card grid, not tabular data.
   //
-  // PDF-only copy rule: every prose copy block (an answer, an
-  // explanation, a description, ...) is capped at 280 characters here —
-  // see PDF_COPY_LIMIT/pdfCopy below — even though the on-page HTML above
-  // shows the full, uncapped copy. And if a box still has more copy than
-  // fits on one page even after that cap (e.g. 10 Top Initiatives), the
-  // rest spills into a same-named "[Box Title] (Cont.)" box rather than
-  // getting clipped — see flowBoxLines below.
+  // Copy-length rule: every prose copy block (an answer, an explanation,
+  // a description, ...) is capped at 300 characters — see
+  // COPY_LIMIT/capToLimit below — and this is now the SAME copy shown on
+  // the page, not a separate PDF-only condensed version, so both surfaces
+  // always match. If a box still has more copy than fits on one page even
+  // after that cap (e.g. 10 Top Initiatives), the rest spills into a
+  // same-named "[Box Title] (Cont.)" box rather than getting clipped —
+  // see flowBoxLines below.
 
   function hexToRgb(hex) {
     const clean = (hex || "#2F6FEB").replace("#", "");
@@ -352,65 +376,55 @@
     return String.fromCharCode(65 + index);
   }
 
-  // PDF-only rule: no single copy block (an answer, an explanation, a
-  // description, etc.) may exceed 280 characters in the exported PDF, even
-  // though the on-page HTML above shows the full, uncapped copy. The
-  // backend is asked to hand back an already-condensed "<field>ForPdf"
-  // version of every prose field (a real rewrite that keeps the strongest
-  // proof point, not a mid-sentence cut), and every call site below prefers
-  // that field. capTo280 is the client-side safety net for whatever slips
-  // through uncapped (an older cached run, a field the model skipped, or a
-  // condensed version that still came back slightly over budget) — it
-  // trims to the last full sentence under the limit, falling back to the
-  // last full word, so a box never gets cut off mid-word.
-  const PDF_COPY_LIMIT = 280;
+  // Shared 300-character copy cap — the SAME limit used on the page
+  // (renderResults above) and here in the PDF, since there's no longer a
+  // separate condensed PDF-only field. The backend is asked to write
+  // within this limit from the start; capToLimit is the client-side
+  // safety net for whatever slips through over budget anyway (an older
+  // cached run, or a field the model missed) — it trims to the last full
+  // sentence under the limit, falling back to the last full word, so
+  // copy never gets cut off mid-word.
+  const COPY_LIMIT = 300;
 
-  function capTo280(text) {
+  function capToLimit(text) {
     const t = String(text == null ? "" : text).trim();
-    if (t.length <= PDF_COPY_LIMIT) return t;
-    const slice = t.slice(0, PDF_COPY_LIMIT);
+    if (t.length <= COPY_LIMIT) return t;
+    const slice = t.slice(0, COPY_LIMIT);
     const lastSentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
-    if (lastSentenceEnd > PDF_COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
+    if (lastSentenceEnd > COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
     const lastSpace = slice.lastIndexOf(" ");
-    const base = lastSpace > PDF_COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, PDF_COPY_LIMIT - 1);
+    const base = lastSpace > COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, COPY_LIMIT - 1);
     return `${base.trim()}…`;
   }
 
-  // Prefers the backend's condensed "ForPdf" copy for a field, falling back
-  // to a locally-capped version of the full copy when it's missing.
-  function pdfCopy(condensed, full) {
-    return capTo280(condensed || full);
-  }
-
   // Builds the plain-text body lines for a given box, shared by the PDF
-  // renderer. Each line is { bold, text, gapAfter }. Mirrors the on-page
-  // HTML rendering above, except every prose copy block is capped to 280
-  // characters (see PDF_COPY_LIMIT above) — the on-page HTML always shows
-  // the full, uncapped copy. buildPdf below paginates on top of that, and
-  // overflows any box that still doesn't fit into a "(Cont.)" box.
+  // renderer. Each line is { bold, text, gapAfter, url }. Mirrors the
+  // on-page HTML rendering above — same copy, same 300-character cap
+  // (see COPY_LIMIT above). buildPdf below paginates on top of that, and
+  // overflows any box that still doesn't fit into a "(Cont.)" box. A line
+  // with `url` set is drawn as a clickable link (see drawBox) — used for
+  // each customer reference's proof-point link.
   function buildPdfLines(boxKey, boxes) {
     const lines = [];
-    const push = (text, bold, gapAfter) => lines.push({ text, bold: !!bold, gapAfter: gapAfter || 4 });
+    const push = (text, bold, gapAfter, url) =>
+      lines.push({ text, bold: !!bold, gapAfter: gapAfter || 4, url: url || null });
 
     if (boxKey === "competitorProduct") {
       const cp = boxes.competitorProduct || {};
       push(`Competitor Name: ${cp.competitorName || "—"}`, false, 6);
-      push(`Value Proposition: ${pdfCopy(cp.valuePropositionForPdf, cp.valueProposition) || "—"}`, false, 6);
-      push(`Primary Products: ${pdfCopy(cp.primaryProductsForPdf, cp.primaryProducts) || "—"}`, false, 6);
+      push(`Value Proposition: ${capToLimit(cp.valueProposition) || "—"}`, false, 6);
+      push(`Primary Products: ${capToLimit(cp.primaryProducts) || "—"}`, false, 6);
     } else if (boxKey === "ourFeatures" || boxKey === "theirFeatures") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
       items.forEach((i) => {
         push(i.name, true, 2);
-        push(pdfCopy(i.descriptionForPdf, i.description), false, 6);
+        push(capToLimit(i.description), false, 6);
       });
     } else if (boxKey === "topInitiatives") {
       const items = boxes.topInitiatives || [];
-      const pdfItems = boxes.topInitiativesForPdf || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((t, idx) =>
-        push(`${indexToLetter(idx) || idx + 1}. ${pdfCopy(pdfItems[idx], t)}`, false, 5)
-      );
+      items.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${capToLimit(t)}`, false, 5));
     } else if (boxKey === "whereWeWin" || boxKey === "competitorChallenges") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
@@ -418,21 +432,26 @@
         const tag = boxKey === "competitorChallenges" && i.whereWeCompete ? "  [Where We Compete]" : "";
         push(`${i.feature}${tag}`, true, 2);
         if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
-        push(pdfCopy(i.explanationForPdf, i.explanation), false, 6);
+        push(capToLimit(i.explanation), false, 6);
       });
     } else if (boxKey === "customerReferences") {
       const items = boxes.customerReferences || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      items.forEach((i) => push(`• ${i.name}${i.inIndustry ? "  (In Industry)" : ""}`, false, 5));
+      items.forEach((i) => {
+        const industryTag = i.inIndustry ? "  (In Industry)" : "";
+        const refLabel = i.referenceUrl ? (i.referenceType === "case_study" ? "Case Study" : "Reference") : null;
+        const text = `• ${i.name}${industryTag}${refLabel ? `  —  ${refLabel}` : ""}`;
+        push(text, false, 5, i.referenceUrl);
+      });
     } else if (boxKey === "pricing") {
       const p = boxes.pricing || {};
-      push(pdfCopy(p.summaryForPdf, p.summary) || "Refer to internal documentation for pricing.", false, 6);
+      push(capToLimit(p.summary) || "Refer to internal documentation for pricing.", false, 6);
     } else if (boxKey === "talkingPoints") {
       const items = boxes.talkingPoints || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
       items.forEach((i) => {
         push(`Q: ${i.question}`, true, 2);
-        push(`A: ${pdfCopy(i.answerForPdf, i.answer)}`, false, 8);
+        push(`A: ${capToLimit(i.answer)}`, false, 8);
       });
     }
     return lines;
@@ -538,11 +557,22 @@
       }
       doc.setFont("helvetica", line.bold ? "bold" : "normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(line.bold ? 31 : 70, line.bold ? 32 : 71, line.bold ? 35 : 78);
+      if (line.url) {
+        // Color a linked line (a customer reference's proof link) in the
+        // brand accent so it reads as clickable, even though PDF viewers
+        // don't otherwise style textWithLink text differently on their own.
+        doc.setTextColor(accentRgb[0], accentRgb[1], accentRgb[2]);
+      } else {
+        doc.setTextColor(line.bold ? 31 : 70, line.bold ? 32 : 71, line.bold ? 35 : 78);
+      }
       const wrapped = doc.splitTextToSize(line.text, maxWidth);
       for (const wl of wrapped) {
         if (cursorY > bottomLimit) break;
-        doc.text(wl, x + pad, cursorY);
+        if (line.url) {
+          doc.textWithLink(wl, x + pad, cursorY, { url: line.url });
+        } else {
+          doc.text(wl, x + pad, cursorY);
+        }
         cursorY += 10;
       }
       cursorY += line.gapAfter;
@@ -755,7 +785,7 @@
       const talkingPointsHeight = rowHeight - halfHeight - GAP;
       const overflow = []; // { key, lines } for any box that didn't fully fit
 
-      // Where We Win / Competitor Challenges: unchanged, full row height.
+      // Where We Win / Competitor Considerations: unchanged, full row height.
       ["whereWeWin", "competitorChallenges"].forEach((key, i) => {
         const availableContentHeight = rowHeight - BOX_CHROME_TOP - BOX_BOTTOM_PAD;
         const { chunk, remaining } = splitLinesForHeight(doc, perBoxLines[i], boxW - BOX_PAD_X * 2, availableContentHeight);
@@ -796,7 +826,7 @@
 
       y = rowY + rowHeight + GAP;
 
-      // Anything that didn't fit — Where We Win / Competitor Challenges
+      // Anything that didn't fit — Where We Win / Competitor Considerations
       // overflow, Customer References / Pricing Overview overflow, or the
       // rest of Key Talking Points — spills into full-width "(Cont.)"
       // boxes right after the row, in reading order.

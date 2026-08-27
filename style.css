@@ -236,23 +236,67 @@ body {
   margin-bottom: 6px;
 }
 
-.box-body .lettered-list {
-  list-style-type: upper-alpha;
+/* Top Prospect Initiatives: each item is a letter badge (the same bold,
+   boxed treatment as .initiative-badge in the Where We Win / Competitor
+   Considerations tables) sitting beside its text, replacing the plain
+   ordered-list markers this used to use. */
+.box-body .initiative-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
+.box-body .initiative-item:last-child {
+  margin-bottom: 0;
+}
+
+.box-body .initiative-copy {
+  flex: 1;
+}
+
+/* Base look shared everywhere a lettered badge appears — size/position are
+   set per context below, since Top Prospect Initiatives needs a small
+   marker-style badge beside its text while Where We Win / Competitor
+   Considerations need a larger one centered below the feature name. */
 .box-body .initiative-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin-top: 5px;
   border-radius: 6px;
   background: rgba(47, 111, 235, 0.12);
   color: var(--accent-dark);
   font-weight: 700;
-  font-size: 15px;
   line-height: 1;
+}
+
+.box-body .initiative-item .initiative-badge {
+  width: 24px;
+  height: 24px;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+/* Where We Win / Competitor Considerations: the feature name, its letter
+   badge, and (Competitor Considerations only) the "Where We Compete" tag
+   stack in a centered column below the name — badge is twice the size
+   used in Top Prospect Initiatives. */
+.box-body .feature-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.box-body .feature-cell > strong {
+  align-self: flex-start;
+}
+
+.box-body .feature-cell .initiative-badge {
+  width: 48px;
+  height: 48px;
+  font-size: 30px;
+  border-radius: 10px;
+  align-self: center;
+  margin-top: 16px;
 }
 
 .box-body .kv-line {
@@ -277,13 +321,39 @@ body {
 
 .box-body .tag-compete {
   display: inline-block;
-  margin-top: 3px;
-  padding: 1px 6px;
+  align-self: center;
+  margin-top: 12px;
+  padding: 6px 16px;
   border-radius: 999px;
-  background: rgba(200, 90, 30, 0.12);
-  color: #a1521a;
-  font-size: 10.5px;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.box-body .reference-link {
+  display: inline-block;
+  color: var(--accent-dark);
   font-weight: 600;
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.box-body .reference-link:hover {
+  text-decoration: underline;
+}
+
+.box-body .reference-none {
+  color: #b7b9c0;
+  font-size: 12px;
+}
+
+.box-body .ref-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
 }
 
 .box-body .qa-item {

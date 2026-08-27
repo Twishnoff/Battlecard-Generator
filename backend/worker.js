@@ -308,7 +308,7 @@ function buildPrompt({
   today,
 }) {
   const industryLine = industry
-    ? `Target industry: ${industry}. Restrict job-description research to postings for the target Job Title at companies in this industry. Also prioritize any industry-specific pages/content from either company's website and marketing materials over general messaging when filling out boxes like "Competitor Challenges" or "Where We Win" — general messaging is still useful, but industry-specific proof points should be leaned on more heavily where they exist.`
+    ? `Target industry: ${industry}. Restrict job-description research to postings for the target Job Title at companies in this industry. Also prioritize any industry-specific pages/content from either company's website and marketing materials over general messaging when filling out boxes like "Competitor Considerations" or "Where We Win" — general messaging is still useful, but industry-specific proof points should be leaned on more heavily where they exist.`
     : `Target industry: (none specified). Do not restrict research by industry, but still apply every other rule below.`;
 
   const system = `You are the research engine behind the "Instant Battle Card Generator," a tool that lets an account executive instantly generate a sales battle card for selling against a specific competitor, for a specific job title (and optionally industry) they're about to talk to.
@@ -334,48 +334,45 @@ Return ONLY a single JSON object (no prose before or after, no markdown code fen
     "competitorProduct": {
       "competitorName": "...",
       "valueProposition": "...",
-      "valuePropositionForPdf": "...",
-      "primaryProducts": "...",
-      "primaryProductsForPdf": "..."
+      "primaryProducts": "..."
     },
-    "ourFeatures": [ { "name": "...", "description": "...", "descriptionForPdf": "..." } ],
-    "theirFeatures": [ { "name": "...", "description": "...", "descriptionForPdf": "..." } ],
+    "ourFeatures": [ { "name": "...", "description": "..." } ],
+    "theirFeatures": [ { "name": "...", "description": "..." } ],
     "topInitiatives": [ "..." ],
-    "topInitiativesForPdf": [ "..." ],
-    "whereWeWin": [ { "feature": "...", "explanation": "...", "explanationForPdf": "...", "relatedInitiativeIndex": 0 } ],
-    "competitorChallenges": [ { "feature": "...", "explanation": "...", "explanationForPdf": "...", "whereWeCompete": false, "relatedInitiativeIndex": 0 } ],
-    "customerReferences": [ { "name": "...", "inIndustry": false } ],
-    "talkingPoints": [ { "question": "...", "answer": "...", "answerForPdf": "..." } ],
-    "pricing": { "summary": "...", "summaryForPdf": "...", "isPlaceholder": false }
+    "whereWeWin": [ { "feature": "...", "explanation": "...", "relatedInitiativeIndex": 0 } ],
+    "competitorChallenges": [ { "feature": "...", "explanation": "...", "whereWeCompete": false, "relatedInitiativeIndex": 0 } ],
+    "customerReferences": [ { "name": "...", "inIndustry": false, "referenceUrl": "...", "referenceType": "case_study" } ],
+    "talkingPoints": [ { "question": "...", "answer": "..." } ],
+    "pricing": { "summary": "...", "isPlaceholder": false }
   }
 }
+
+Length rule that applies to EVERY prose field below — "valueProposition", "primaryProducts", each "description", each string in "topInitiatives", every "explanation", every "answer", and "pricing.summary" (NOT names, NOT booleans, NOT the "talkingPoints" questions, which are fixed strings you're told to use verbatim): each one must be 300 characters or fewer, counting spaces and punctuation. This is the exact same copy shown on the webpage and in the exported PDF, so write each field as an already-tight, complete thought from the start — don't write a longer draft assuming it will get trimmed later. If a point can't be fully made in 300 characters, keep the single strongest, most concrete part (a specific number, name, or outcome) and drop the rest rather than writing a vaguer full-length version. Do not pad a field with filler just to approach the limit — shorter is fine as long as the point survives.
 
 Rules for each field:
 
 - "competitorName" (top-level) and "boxes.competitorProduct.competitorName": the official name of the company behind Competitor URL (not the URL/domain itself).
 - "companyName" (top-level): the official name of the company behind Company URL (not the URL/domain itself).
 
-- "boxes.competitorProduct": "valueProposition" is up to two sentences on the competitor's primary value proposition, grounded in their site/marketing materials. "primaryProducts" lists the competitor's main product NAMES relevant to the Job Title (and Industry if given) — if the competitor doesn't name their product(s), use a single one-sentence description of what the product does instead of a name.
+- "boxes.competitorProduct": "valueProposition" is the competitor's primary value proposition (typically one to two sentences), grounded in their site/marketing materials. "primaryProducts" lists the competitor's main product NAMES relevant to the Job Title (and Industry if given) — if the competitor doesn't name their product(s), use a single short description of what the product does instead of a name.
 
-- "boxes.ourFeatures": exactly up to 5 items — the most relevant and valuable features/capabilities, to the Job Title's likely job description, offered by the COMPANY (Company URL, not Competitor URL). Base this on their website, documentation, marketing materials, social posts, and case studies (bonus weight to case studies tied to the Job Title). Each item's "description" is 1-2 sentences on the benefit/how it helps, at a general level — it does not need to be tied specifically to the Job Title here (job-title relevance is what "whereWeWin" is for).
+- "boxes.ourFeatures": exactly up to 5 items — the most relevant and valuable features/capabilities, to the Job Title's likely job description, offered by the COMPANY (Company URL, not Competitor URL). Base this on their website, documentation, marketing materials, social posts, and case studies (bonus weight to case studies tied to the Job Title). Each item's "description" (typically 1-2 sentences) covers the benefit/how it helps, at a general level — it does not need to be tied specifically to the Job Title here (job-title relevance is what "whereWeWin" is for).
 
 - "boxes.theirFeatures": the same exercise as "ourFeatures", but for the COMPETITOR (Competitor URL, not Company URL). Up to 5 items.
 
-- "boxes.topInitiatives": up to 10 short (1-2 sentence) bullet points inferring the business initiatives/priorities of someone with the given Job Title (and Industry, if given), based on patterns across real job postings for that title/level (per the job title matching rule above) and industry. Only include initiatives that relate to what the COMPANY (Company URL) actually sells — ignore initiatives the Job Title handles that are unrelated to this company's product category, even if those initiatives are important to the role in general. ORDER MATTERS: list these from most to least significant/frequent — the frontend displays them as a lettered list (A, B, C, ...) in this exact order, and "whereWeWin"/"competitorChallenges" items below reference them by that position, so put the most important initiative first.
+- "boxes.topInitiatives": up to 10 bullet points (typically 1-2 sentences each) inferring the business initiatives/priorities of someone with the given Job Title (and Industry, if given), based on patterns across real job postings for that title/level (per the job title matching rule above) and industry. Only include initiatives that relate to what the COMPANY (Company URL) actually sells — ignore initiatives the Job Title handles that are unrelated to this company's product category, even if those initiatives are important to the role in general. ORDER MATTERS: list these from most to least significant/frequent — the frontend displays them as a lettered list (A, B, C, ...) in this exact order, and "whereWeWin"/"competitorChallenges" items below reference them by that position, so put the most important initiative first.
 
-- "boxes.whereWeWin": up to 5 items. Take the COMPANY's (Company URL) products/features/proof points that are superior to or lead the COMPETITOR's (Competitor URL) equivalent, then match them to the highest-ranking items in "topInitiatives" they help with. "feature" is the feature/capability name; "explanation" is 1-3 sentences citing any concrete proof points (performance numbers, savings, adoption numbers, etc.) explaining why the company's product is the ideal solution for that initiative — keep it tight (aim for roughly 40-60 words) without dropping the concrete proof point, since this is displayed in a compact card. "relatedInitiativeIndex" is the 0-based index into the "topInitiatives" array (so 0 = the first/"A" initiative, 1 = the second/"B" initiative, etc.) of the single initiative this feature is MOST relevant to — this is used to tag the feature with that initiative's letter, so pick exactly one, the best match.
+- "boxes.whereWeWin": up to 5 items. Take the COMPANY's (Company URL) products/features/proof points that are superior to or lead the COMPETITOR's (Competitor URL) equivalent, then match them to the highest-ranking items in "topInitiatives" they help with. "feature" is the feature/capability name; "explanation" cites any concrete proof points (performance numbers, savings, adoption numbers, etc.) explaining why the company's product is the ideal solution for that initiative — use the space efficiently, but never drop a concrete proof point just to shorten it further. "relatedInitiativeIndex" is the 0-based index into the "topInitiatives" array (so 0 = the first/"A" initiative, 1 = the second/"B" initiative, etc.) of the single initiative this feature is MOST relevant to — this is used to tag the feature with that initiative's letter, so pick exactly one, the best match.
 
-- "boxes.competitorChallenges": the mirror of "whereWeWin" — up to 5 items highlighting the COMPETITOR's (Competitor URL) features/capabilities that address the top initiatives, where the COMPANY (Company URL) is comparably weaker or has thinner proof points. Same "feature"/"explanation"/"relatedInitiativeIndex" shape and the same ~40-60-word conciseness target for "explanation". Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies compete on that same initiative) — false otherwise.
+- "boxes.competitorChallenges": the mirror of "whereWeWin" — up to 5 items highlighting the COMPETITOR's (Competitor URL) features/capabilities that address the top initiatives, where the COMPANY (Company URL) is comparably weaker or has thinner proof points. Same "feature"/"explanation"/"relatedInitiativeIndex" shape. Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies compete on that same initiative) — false otherwise. (This box is labeled "Competitor Considerations" on the webpage and in the PDF — keep using the "competitorChallenges" key here.)
 
-- "boxes.customerReferences": up to 5 customers named on the COMPANY's (Company URL) website/marketing materials/social posts. Order: any customers in the specified Industry first (set "inIndustry": true on those), then the rest ordered by company size (employee count/revenue) where knowable, otherwise alphabetically. If no Industry was specified, "inIndustry" should be false for all.
+- "boxes.customerReferences": up to 5 customers named on the COMPANY's (Company URL) website/marketing materials/social posts. Order: any customers in the specified Industry first (set "inIndustry": true on those), then the rest ordered by company size (employee count/revenue) where knowable, otherwise alphabetically. If no Industry was specified, "inIndustry" should be false for all. For each customer, also try to find exactly ONE URL that serves as proof this is a real customer: prefer a dedicated case study, customer story, or testimonial page about them if the COMPANY has one (set "referenceType": "case_study"); otherwise use any other page that names them as a customer — a press release, a logos/quotes page, a review — and set "referenceType": "mention". Use the single most specific, most authoritative URL you can find (never a search-results page). If you can't find a genuine URL for a customer, set both "referenceUrl" and "referenceType" to null — never fabricate or guess a URL.
 
-- "boxes.talkingPoints": Q&A entries, written from the perspective of a salesperson at the COMPANY (Company URL), using messaging/proof points/numbers from both companies' sites where possible. ALWAYS include exactly these three, each with a 2-5 sentence "answer": (1) question: "This product is too expensive" (2) question: "How are you any better than [the competitor's actual name, not the literal word 'competitor']?" (3) question: "We already have a similar solution, why would we replace it with you?". These answers should specifically counter the competitor's top features/marketing claims found in "theirFeatures" and "competitorChallenges", and should align with the prospect Job Title's priorities from "topInitiatives". Favor the tighter end of the 2-5 sentence range where the point can still be made — concise and proof-point-dense beats padded — but never cut a concrete number or proof point just to shorten it. You may include up to 2 additional strong Q&A pairs beyond these three if genuinely useful, for a maximum of 5 total.
+- "boxes.talkingPoints": Q&A entries, written from the perspective of a salesperson at the COMPANY (Company URL), using messaging/proof points/numbers from both companies' sites where possible. ALWAYS include exactly these three: (1) question: "This product is too expensive" (2) question: "How are you any better than [the competitor's actual name, not the literal word 'competitor']?" (3) question: "We already have a similar solution, why would we replace it with you?". Each "answer" should specifically counter the competitor's top features/marketing claims found in "theirFeatures" and "competitorChallenges", and should align with the prospect Job Title's priorities from "topInitiatives" — write the tightest phrasing that still lands the point and keeps any concrete proof point intact; never sacrifice a concrete number or proof point just to shorten it further. You may include up to 2 additional strong Q&A pairs beyond these three if genuinely useful, for a maximum of 5 total.
 
 - "boxes.pricing": "summary" summarizes any pricing explicitly published on the COMPANY's (Company URL) website, focused on the products/features relevant to the Job Title if pricing is broken out by product. If the website only directs visitors to contact sales (no public pricing), set "summary" to exactly "Refer to internal documentation for pricing." and "isPlaceholder": true. Otherwise "isPlaceholder": false.
 
-All object/array fields must always be present (use an empty array/short placeholder string rather than omitting a key). Do not pad any list with weak/irrelevant items just to fill a quota — fewer strong items beats more weak ones, but always try to reach the stated counts where good candidates genuinely exist.
-
-- PDF-condensed copy ("...ForPdf" fields): this tool also exports a printable PDF version of the battle card that has much less room per box than the webpage, so for every prose field above you must ALSO return a second version of it, using the exact same field name with "ForPdf" appended, condensed to 280 characters or fewer (counting spaces and punctuation): "boxes.competitorProduct.valuePropositionForPdf", "boxes.competitorProduct.primaryProductsForPdf", each "ourFeatures"/"theirFeatures" item's "descriptionForPdf", "boxes.topInitiativesForPdf" (a parallel array to "topInitiatives" — same length, same order, one condensed string per initiative), each "whereWeWin"/"competitorChallenges" item's "explanationForPdf", each "talkingPoints" item's "answerForPdf", and "boxes.pricing.summaryForPdf". These must be genuine rewrites, not truncations: compress the wording so it fits under 280 characters while keeping the single strongest claim or proof point (a concrete number, a name, a specific outcome) intact, rather than cutting the sentence off wherever the limit lands. Do not pad a condensed field with filler to approach the limit — shorter is fine as long as the core point survives. If a full-length field above is already 280 characters or fewer, its "ForPdf" counterpart can just repeat it. "customerReferences" names need no condensed counterpart. The full-length fields above are unaffected by this rule and are what the webpage displays, which has no length limit.`;
+All object/array fields must always be present (use an empty array/short placeholder string rather than omitting a key). Do not pad any list with weak/irrelevant items just to fill a quota — fewer strong items beats more weak ones, but always try to reach the stated counts where good candidates genuinely exist.`;
 
   const user = `Company URL (the account executive's own company — the seller): ${companyUrl}
 Homepage snapshot (may be incomplete — use web search for more):
@@ -402,9 +399,8 @@ Research and return the JSON object described in your instructions now.`;
 // Statuses worth retrying: 524/529/503/502/500 are all "the request never
 // really got a considered answer" (524 in particular is Cloudflare's own
 // timeout page in front of Anthropic's API, meaning the request was still
-// running past ~100s — genuinely common for this endpoint since it does up
-// to 14 web searches AND now has to write both the full and 280-char
-// "ForPdf" copy for every field). 429 (rate limit) is also worth a short
+// running past ~100s — this endpoint does up to 14 web searches, which can
+// genuinely take a while). 429 (rate limit) is also worth a short
 // backoff-and-retry rather than failing the user's request outright.
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 524, 529]);
 const RETRY_DELAYS_MS = [2000, 5000]; // before attempt 2, then before attempt 3
@@ -491,35 +487,40 @@ function boolVal(v) {
 }
 
 // ---------------------------------------------------------------------
-// PDF-only 280-character copy cap. The model is asked (see buildPrompt)
-// to hand back an already-condensed "<field>ForPdf" version of every
-// prose field — a real rewrite that keeps the strongest proof point, not
-// a mid-sentence cut. capTo280 is the safety net for whatever slips
-// through uncapped (the model skips a field, or its condensed version
-// still comes back slightly over budget): it trims to the last full
-// sentence under the limit, falling back to the last full word, so
-// nothing gets cut off mid-word. The website rendering (app.js
-// renderResults) is unaffected — it always uses the uncapped fields.
+// 300-character copy cap — the SAME cap for every surface (the webpage
+// and the PDF both show this exact field now; there's no separate
+// condensed variant anymore). The model is asked (see buildPrompt) to
+// write within this limit from the start; capToLimit is the safety net
+// for whatever slips through over budget anyway. It trims to the last
+// full sentence under the limit, falling back to the last full word, so
+// nothing gets cut off mid-word.
 // ---------------------------------------------------------------------
 
-const PDF_COPY_LIMIT = 280;
+const COPY_LIMIT = 300;
 
-function capTo280(text) {
+function capToLimit(text) {
   const t = (text || "").trim();
-  if (t.length <= PDF_COPY_LIMIT) return t;
-  const slice = t.slice(0, PDF_COPY_LIMIT);
+  if (t.length <= COPY_LIMIT) return t;
+  const slice = t.slice(0, COPY_LIMIT);
   const lastSentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
-  if (lastSentenceEnd > PDF_COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
+  if (lastSentenceEnd > COPY_LIMIT / 2) return slice.slice(0, lastSentenceEnd + 1).trim();
   const lastSpace = slice.lastIndexOf(" ");
-  const base = lastSpace > PDF_COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, PDF_COPY_LIMIT - 1);
+  const base = lastSpace > COPY_LIMIT / 2 ? slice.slice(0, lastSpace) : slice.slice(0, COPY_LIMIT - 1);
   return `${base.trim()}…`;
 }
 
-// Prefers the model's condensed "<field>ForPdf" value; falls back to a
-// locally-capped version of the full field when the model omitted it.
-// Either way the result is guaranteed <= PDF_COPY_LIMIT characters.
-function pdfCopy(condensed, full) {
-  return capTo280(str(condensed, full));
+// Validates a model-provided URL, returning it normalized or null. Used
+// for customer-reference proof links — never trust the model's string
+// as-is, and never let a malformed value reach the frontend as an href.
+function urlOrNull(v) {
+  const s = str(v);
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : null;
+  } catch (err) {
+    return null;
+  }
 }
 
 // A=0, B=1, ... matches the frontend's upper-alpha lettered list for
@@ -534,41 +535,26 @@ function sanitizeBoxes(raw, competitorNameFallback) {
   const boxes = (raw && raw.boxes) || {};
 
   const competitorProductRaw = boxes.competitorProduct || {};
-  const valueProposition = str(competitorProductRaw.valueProposition, "");
-  const primaryProducts = str(competitorProductRaw.primaryProducts, "");
   const competitorProduct = {
     competitorName: str(competitorProductRaw.competitorName, competitorNameFallback),
-    valueProposition,
-    valuePropositionForPdf: pdfCopy(competitorProductRaw.valuePropositionForPdf, valueProposition),
-    primaryProducts,
-    primaryProductsForPdf: pdfCopy(competitorProductRaw.primaryProductsForPdf, primaryProducts),
+    valueProposition: capToLimit(str(competitorProductRaw.valueProposition)),
+    primaryProducts: capToLimit(str(competitorProductRaw.primaryProducts)),
   };
 
   const featureList = (list) =>
     (Array.isArray(list) ? list : [])
       .filter((i) => i && str(i.name))
       .slice(0, 5)
-      .map((i) => {
-        const description = str(i.description);
-        return { name: str(i.name), description, descriptionForPdf: pdfCopy(i.descriptionForPdf, description) };
-      });
+      .map((i) => ({ name: str(i.name), description: capToLimit(str(i.description)) }));
 
   const ourFeatures = featureList(boxes.ourFeatures);
   const theirFeatures = featureList(boxes.theirFeatures);
 
-  // Paired by index against the raw (pre-filter) arrays so the PDF-copy
-  // array stays aligned with topInitiatives after filtering/slicing.
-  const rawInitiatives = Array.isArray(boxes.topInitiatives) ? boxes.topInitiatives : [];
-  const rawInitiativesForPdf = Array.isArray(boxes.topInitiativesForPdf) ? boxes.topInitiativesForPdf : [];
-  const initiativePairs = rawInitiatives
-    .map((i, idx) => {
-      const text = typeof i === "string" ? i.trim() : str(i && i.text);
-      return { text, pdfText: pdfCopy(rawInitiativesForPdf[idx], text) };
-    })
-    .filter((pair) => pair.text)
-    .slice(0, 10);
-  const topInitiatives = initiativePairs.map((pair) => pair.text);
-  const topInitiativesForPdf = initiativePairs.map((pair) => pair.pdfText);
+  const topInitiatives = (Array.isArray(boxes.topInitiatives) ? boxes.topInitiatives : [])
+    .map((i) => (typeof i === "string" ? i.trim() : str(i && i.text)))
+    .filter(Boolean)
+    .slice(0, 10)
+    .map((t) => capToLimit(t));
 
   // Valid range for relatedInitiativeIndex depends on the (already
   // sanitized) topInitiatives length, so this must run after that array
@@ -583,49 +569,44 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     (Array.isArray(list) ? list : [])
       .filter((i) => i && str(i.feature))
       .slice(0, 5)
-      .map((i) => {
-        const explanation = str(i.explanation);
-        return {
-          feature: str(i.feature),
-          explanation,
-          explanationForPdf: pdfCopy(i.explanationForPdf, explanation),
-          initiativeLetter: initiativeLetterFor(i),
-        };
-      });
+      .map((i) => ({
+        feature: str(i.feature),
+        explanation: capToLimit(str(i.explanation)),
+        initiativeLetter: initiativeLetterFor(i),
+      }));
 
   const whereWeWin = winList(boxes.whereWeWin);
   const competitorChallenges = (Array.isArray(boxes.competitorChallenges) ? boxes.competitorChallenges : [])
     .filter((i) => i && str(i.feature))
     .slice(0, 5)
-    .map((i) => {
-      const explanation = str(i.explanation);
-      return {
-        feature: str(i.feature),
-        explanation,
-        explanationForPdf: pdfCopy(i.explanationForPdf, explanation),
-        whereWeCompete: boolVal(i.whereWeCompete),
-        initiativeLetter: initiativeLetterFor(i),
-      };
-    });
+    .map((i) => ({
+      feature: str(i.feature),
+      explanation: capToLimit(str(i.explanation)),
+      whereWeCompete: boolVal(i.whereWeCompete),
+      initiativeLetter: initiativeLetterFor(i),
+    }));
 
   const customerReferences = (Array.isArray(boxes.customerReferences) ? boxes.customerReferences : [])
     .filter((i) => i && str(i.name))
     .slice(0, 5)
-    .map((i) => ({ name: str(i.name), inIndustry: boolVal(i.inIndustry) }));
+    .map((i) => {
+      const referenceUrl = urlOrNull(i.referenceUrl);
+      const referenceType = !referenceUrl
+        ? null
+        : i.referenceType === "case_study" || i.referenceType === "mention"
+        ? i.referenceType
+        : "mention";
+      return { name: str(i.name), inIndustry: boolVal(i.inIndustry), referenceUrl, referenceType };
+    });
 
   const talkingPoints = (Array.isArray(boxes.talkingPoints) ? boxes.talkingPoints : [])
     .filter((i) => i && str(i.question) && str(i.answer))
     .slice(0, 5)
-    .map((i) => {
-      const answer = str(i.answer);
-      return { question: str(i.question), answer, answerForPdf: pdfCopy(i.answerForPdf, answer) };
-    });
+    .map((i) => ({ question: str(i.question), answer: capToLimit(str(i.answer)) }));
 
   const pricingRaw = boxes.pricing || {};
-  const summary = str(pricingRaw.summary, "Refer to internal documentation for pricing.");
   const pricing = {
-    summary,
-    summaryForPdf: pdfCopy(pricingRaw.summaryForPdf, summary),
+    summary: capToLimit(str(pricingRaw.summary, "Refer to internal documentation for pricing.")),
     isPlaceholder: pricingRaw.isPlaceholder === true || !str(pricingRaw.summary),
   };
 
@@ -634,7 +615,6 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     ourFeatures,
     theirFeatures,
     topInitiatives,
-    topInitiativesForPdf,
     whereWeWin,
     competitorChallenges,
     customerReferences,
