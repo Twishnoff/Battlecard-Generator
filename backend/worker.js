@@ -347,7 +347,13 @@ Return ONLY a single JSON object (no prose before or after, no markdown code fen
   }
 }
 
-Length rule that applies to EVERY prose field below (NOT names, NOT booleans, NOT the "talkingPoints" questions, which are fixed strings you're told to use verbatim), counting spaces and punctuation: "valueProposition", "primaryProducts", each "description", every "answer", and "pricing.summary" must each be 300 characters or fewer. "topInitiatives", "whereWeWin", and "competitorChallenges" work differently — no single item in these three has a fixed character limit, but each BOX's combined prose length must stay under 1400 characters total, counted separately per box: every string in "topInitiatives" added together must total 1400 characters or fewer; every "explanation" in "whereWeWin" added together must total 1400 characters or fewer; every "explanation" in "competitorChallenges" added together must total 1400 characters or fewer. This is the exact same copy shown on the webpage and in the exported PDF, so budget each of those three boxes deliberately as you write it — size individual items to how much they actually deserve (a couple of items can run longer if they carry real proof points, while others stay to one tight sentence) rather than giving every item equal length by default. If a box's items genuinely can't all be covered within its 1400-character budget, keep the strongest, most concrete items (or the most concrete part of a weaker one) and trim or drop the rest rather than writing a vaguer version of everything. Do not pad any field with filler just to approach a limit — shorter is fine as long as the point survives.
+Every prose field you write, in every box, must be a complete, grammatically finished thought — a full sentence or a deliberately short phrase that stands on its own. NEVER end a field mid-sentence, mid-clause, or with an ellipsis ("…" or "...") standing in for words you didn't write — if you find yourself trimming a field to fit a limit, cut whole trailing sentences (or drop the whole item, see below), never chop the sentence you're currently writing.
+
+Length rule that applies to EVERY prose field below (NOT names, NOT booleans, NOT the "talkingPoints" questions, which are fixed strings you're told to use verbatim), counting spaces and punctuation: "valueProposition", "primaryProducts", each "description", every "answer", and "pricing.summary" must each be 300 characters or fewer.
+
+"whereWeWin" and "competitorChallenges" each have TWO limits that both apply at once: (1) every individual "explanation" must be 220 characters or fewer, AND (2) all the "explanation" values in that box added together must be 1100 characters or fewer — the two boxes' totals are counted separately from each other. "topInitiatives" has its own tighter pair of limits since its items are meant to be short one-line bullets: (1) every individual initiative must be 130 characters or fewer, AND (2) all the initiatives in the box added together must be 1300 characters or fewer.
+
+This is the exact same copy shown on the webpage and in the exported PDF, so for these three boxes: write every item to comfortably fit its own item limit as a complete sentence (don't write a longer draft and expect it to get cut down — compose it short from the start), AND keep an eye on the running total as you write the box's items so the whole box stays within its total budget too. If you truly cannot fit everything (e.g. all 10 strong initiatives at 130 characters would blow past 1300 total), leave out enough of the weakest/least important trailing items (in the priority order described for that field below) that the ones you DO include comfortably fit both limits — never shorten an item's sentence to make it fit instead. Do not pad any field with filler just to approach a limit — shorter is fine as long as the point survives.
 
 Rules for each field:
 
@@ -360,11 +366,11 @@ Rules for each field:
 
 - "boxes.theirFeatures": the same exercise as "ourFeatures", but for the COMPETITOR (Competitor URL, not Company URL). Up to 5 items.
 
-- "boxes.topInitiatives": up to 10 bullet points inferring the business initiatives/priorities of someone with the given Job Title (and Industry, if given), based on patterns across real job postings for that title/level (per the job title matching rule above) and industry. Only include initiatives that relate to what the COMPANY (Company URL) actually sells — ignore initiatives the Job Title handles that are unrelated to this company's product category, even if those initiatives are important to the role in general. No single initiative has a fixed length (see the Length rule above) — write each one as long or as short as it deserves, but the combined length of all initiatives in this box together must stay under 1400 characters, so weigh how many strong initiatives you can genuinely cover in that budget against how much depth each one gets. ORDER MATTERS: list these from most to least significant/frequent — the frontend displays them as a lettered list (A, B, C, ...) in this exact order, and "whereWeWin"/"competitorChallenges" items below reference them by that position, so put the most important initiative first.
+- "boxes.topInitiatives": up to 10 bullet points inferring the business initiatives/priorities of someone with the given Job Title (and Industry, if given), based on patterns across real job postings for that title/level (per the job title matching rule above) and industry. Only include initiatives that relate to what the COMPANY (Company URL) actually sells — ignore initiatives the Job Title handles that are unrelated to this company's product category, even if those initiatives are important to the role in general. Each initiative is a single, tight sentence of 130 characters or fewer (see the Length rule above), and the combined length of all initiatives in this box together must also stay under 1300 characters — with items that short, 10 of them (1300 characters) is the natural ceiling, so favor fewer, sharper initiatives over stretching to fill all 10 if the shorter list is stronger. ORDER MATTERS: list these from most to least significant/frequent — the frontend displays them as a lettered list (A, B, C, ...) in this exact order, and "whereWeWin"/"competitorChallenges" items below reference them by that position, so put the most important initiative first.
 
-- "boxes.whereWeWin": up to 5 items. Take the COMPANY's (Company URL) products/features/proof points that are superior to or lead the COMPETITOR's (Competitor URL) equivalent, then match them to the highest-ranking items in "topInitiatives" they help with. "feature" is the feature/capability name; "explanation" cites any concrete proof points (performance numbers, savings, adoption numbers, etc.) explaining why the company's product is the ideal solution for that initiative — never drop a concrete proof point just to shorten it further. No single "explanation" has a fixed length (see the Length rule above) — instead, every "explanation" in this box added together must stay under 1400 characters, so spend more of that budget on the items with the strongest proof points and less on the rest. "relatedInitiativeIndex" is the 0-based index into the "topInitiatives" array (so 0 = the first/"A" initiative, 1 = the second/"B" initiative, etc.) of the single initiative this feature is MOST relevant to — this is used to tag the feature with that initiative's letter, so pick exactly one, the best match.
+- "boxes.whereWeWin": up to 5 items. Take the COMPANY's (Company URL) products/features/proof points that are superior to or lead the COMPETITOR's (Competitor URL) equivalent, then match them to the highest-ranking items in "topInitiatives" they help with. "feature" is the feature/capability name; "explanation" cites any concrete proof points (performance numbers, savings, adoption numbers, etc.) explaining why the company's product is the ideal solution for that initiative, in 220 characters or fewer (see the Length rule above) — pick the SINGLE strongest proof point rather than trying to list several and running out of room mid-sentence. Every "explanation" in this box added together must also stay under 1100 characters. "relatedInitiativeIndex" is the 0-based index into the "topInitiatives" array (so 0 = the first/"A" initiative, 1 = the second/"B" initiative, etc.) of the single initiative this feature is MOST relevant to — this is used to tag the feature with that initiative's letter, so pick exactly one, the best match.
 
-- "boxes.competitorChallenges": the mirror of "whereWeWin" — up to 5 items highlighting the COMPETITOR's (Competitor URL) features/capabilities that address the top initiatives, where the COMPANY (Company URL) is comparably weaker or has thinner proof points. Same "feature"/"explanation"/"relatedInitiativeIndex" shape, and the same rule that no single "explanation" has a fixed length but every "explanation" in THIS box added together must stay under its own separate 1400-character budget (independent of "whereWeWin"'s budget). Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies compete on that same initiative) — false otherwise. (This box is labeled "Competitor Considerations" on the webpage and in the PDF — keep using the "competitorChallenges" key here.)
+- "boxes.competitorChallenges": the mirror of "whereWeWin" — up to 5 items highlighting the COMPETITOR's (Competitor URL) features/capabilities that address the top initiatives, where the COMPANY (Company URL) is comparably weaker or has thinner proof points. Same "feature"/"explanation"/"relatedInitiativeIndex" shape and the same 220-characters-per-item / 1100-characters-total rule as "whereWeWin" (this box's 1100-character total is its own separate budget, independent of "whereWeWin"'s). Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies compete on that same initiative) — false otherwise. (This box is labeled "Competitor Considerations" on the webpage and in the PDF — keep using the "competitorChallenges" key here.)
 
 - "boxes.customerReferences": up to 5 customers named on the COMPANY's (Company URL) website/marketing materials/social posts. Order: any customers in the specified Industry first (set "inIndustry": true on those), then the rest ordered by company size (employee count/revenue) where knowable, otherwise alphabetically. If no Industry was specified, "inIndustry" should be false for all. For each customer, also try to find exactly ONE URL that serves as proof this is a real customer: prefer a dedicated case study, customer story, or testimonial page about them if the COMPANY has one (set "referenceType": "case_study"); otherwise use any other page that names them as a customer — a press release, a logos/quotes page, a review — and set "referenceType": "mention". Use the single most specific, most authoritative URL you can find (never a search-results page). If you can't find a genuine URL for a customer, set both "referenceUrl" and "referenceType" to null — never fabricate or guess a URL.
 
@@ -511,25 +517,88 @@ function capToLimit(text, limit) {
 }
 
 // ---------------------------------------------------------------------
-// Top Prospect Initiatives, Where We Win, and Competitor Considerations
-// don't cap any single item — the model is asked (see buildPrompt) to
-// size each item freely as long as the WHOLE box's combined copy stays
-// under BOX_TOTAL_LIMIT (1400 characters). capTotalLength is the safety
-// net for whatever still comes back over that total: rather than
-// dropping later items to make room, it trims every item's own SHARE of
-// the overage proportionally (via capToLimit, so each trim still lands
-// on a real sentence/word boundary) — every item stays present, just
-// shorter.
+// Where We Win and Competitor Considerations: each item's own
+// "explanation" is capped at ITEM_LIMIT (220 characters), AND the box's
+// combined copy across all its items is capped at BOX_TOTAL_LIMIT (1100
+// characters) — each box's total counted separately. Top Prospect
+// Initiatives is the one exception, using its own tighter pair of
+// numbers (TOP_INITIATIVES_ITEM_LIMIT/TOP_INITIATIVES_TOTAL_LIMIT below)
+// since its items are meant to be short one-line bullets. The model is
+// asked (see buildPrompt) to write within whichever pair of limits
+// applies from the start; capBoxItems below is the safety net for
+// whatever still slips through, and enforces both WITHOUT ever
+// fragmenting a sentence — no ellipsis, no mid-clause cutoff. An earlier
+// version trimmed text down to an arbitrary character count with a "…"
+// appended, which is exactly what produced cutoffs like "...create
+// seamless handoffs between…" in real output. capBoxItems instead: (1)
+// for any item over its own item limit, keeps only as many WHOLE leading
+// sentences as fit within that limit — dropping the item entirely if not
+// even one complete sentence fits that short, rather than showing a
+// fragment; (2) then, across whatever items survive step 1, keeps them
+// in the order the model wrote them (most important first, per the
+// prompt) until the next whole item would push the box's combined
+// length over its total budget, dropping that item and everything after
+// it. Every item in the response is therefore always complete — this
+// can mean fewer/shorter items some of the time, which is the tradeoff
+// asked for over ever truncating a sentence.
 // ---------------------------------------------------------------------
 
-const BOX_TOTAL_LIMIT = 1400;
+const ITEM_LIMIT = 220;
+const BOX_TOTAL_LIMIT = 1100;
+const TOP_INITIATIVES_ITEM_LIMIT = 130;
+const TOP_INITIATIVES_TOTAL_LIMIT = 1300;
 
-function capTotalLength(texts, totalBudget) {
-  const trimmed = texts.map((t) => (t || "").trim());
-  const total = trimmed.reduce((sum, t) => sum + t.length, 0);
-  if (total <= totalBudget || total === 0) return trimmed;
-  const scale = totalBudget / total;
-  return trimmed.map((t) => capToLimit(t, Math.max(20, Math.floor(t.length * scale))));
+// Trims `text` down to the last COMPLETE sentence that ends at or before
+// `maxLen` characters in — never an arbitrary character cut, never an
+// ellipsis. Returns null (meaning "drop this item, don't show a
+// fragment") if not even one complete sentence fits within maxLen. Scans
+// the ORIGINAL string for each candidate ".", "!", "?" and checks what
+// actually follows it in the full text (end-of-string or whitespace) —
+// not a naive slice-then-search, which could mistake a decimal point or
+// abbreviation landing right at the cutoff for a real sentence end.
+function trimToCompleteSentence(text, maxLen) {
+  const t = (text || "").trim();
+  if (t.length <= maxLen) return t;
+  let lastEnd = -1;
+  for (let i = 0; i < maxLen && i < t.length; i += 1) {
+    const c = t[i];
+    if (c === "." || c === "!" || c === "?") {
+      const next = t[i + 1];
+      if (next === undefined || next === " " || next === "\n") {
+        lastEnd = i;
+      }
+    }
+  }
+  if (lastEnd === -1) return null;
+  return t.slice(0, lastEnd + 1).trim();
+}
+
+// Applies both the per-item and per-box-total rules above to a box's
+// item list. `getText`/`setText` let this work for both plain strings
+// (Top Prospect Initiatives) and objects with an "explanation" field
+// (Where We Win / Competitor Considerations).
+function capBoxItems(items, getText, setText, itemLimit, totalBudget) {
+  const withinItemLimit = [];
+  for (const item of items) {
+    const text = (getText(item) || "").trim();
+    if (text.length <= itemLimit) {
+      withinItemLimit.push(setText(item, text));
+      continue;
+    }
+    const trimmed = trimToCompleteSentence(text, itemLimit);
+    if (trimmed) withinItemLimit.push(setText(item, trimmed));
+    // else: drop this item — no complete sentence fit within itemLimit.
+  }
+
+  const kept = [];
+  let used = 0;
+  for (const item of withinItemLimit) {
+    const text = getText(item);
+    if (kept.length > 0 && used + text.length > totalBudget) break;
+    kept.push(item);
+    used += text.length;
+  }
+  return kept;
 }
 
 // Validates a model-provided URL, returning it normalized or null. Used
@@ -573,12 +642,15 @@ function sanitizeBoxes(raw, competitorNameFallback) {
   const ourFeatures = featureList(boxes.ourFeatures);
   const theirFeatures = featureList(boxes.theirFeatures);
 
-  const topInitiatives = capTotalLength(
+  const topInitiatives = capBoxItems(
     (Array.isArray(boxes.topInitiatives) ? boxes.topInitiatives : [])
       .map((i) => (typeof i === "string" ? i.trim() : str(i && i.text)))
       .filter(Boolean)
       .slice(0, 10),
-    BOX_TOTAL_LIMIT
+    (t) => t,
+    (item, text) => text,
+    TOP_INITIATIVES_ITEM_LIMIT,
+    TOP_INITIATIVES_TOTAL_LIMIT
   );
 
   // Valid range for relatedInitiativeIndex depends on the (already
@@ -592,13 +664,16 @@ function sanitizeBoxes(raw, competitorNameFallback) {
 
   const winList = (list) => {
     const filtered = (Array.isArray(list) ? list : []).filter((i) => i && str(i.feature)).slice(0, 5);
-    const explanations = capTotalLength(
-      filtered.map((i) => str(i.explanation)),
+    const kept = capBoxItems(
+      filtered,
+      (i) => str(i.explanation),
+      (i, text) => ({ ...i, explanation: text }),
+      ITEM_LIMIT,
       BOX_TOTAL_LIMIT
     );
-    return filtered.map((i, idx) => ({
+    return kept.map((i) => ({
       feature: str(i.feature),
-      explanation: explanations[idx],
+      explanation: str(i.explanation),
       initiativeLetter: initiativeLetterFor(i),
     }));
   };
@@ -607,13 +682,16 @@ function sanitizeBoxes(raw, competitorNameFallback) {
   const competitorChallengesFiltered = (Array.isArray(boxes.competitorChallenges) ? boxes.competitorChallenges : [])
     .filter((i) => i && str(i.feature))
     .slice(0, 5);
-  const competitorChallengesExplanations = capTotalLength(
-    competitorChallengesFiltered.map((i) => str(i.explanation)),
+  const competitorChallengesKept = capBoxItems(
+    competitorChallengesFiltered,
+    (i) => str(i.explanation),
+    (i, text) => ({ ...i, explanation: text }),
+    ITEM_LIMIT,
     BOX_TOTAL_LIMIT
   );
-  const competitorChallenges = competitorChallengesFiltered.map((i, idx) => ({
+  const competitorChallenges = competitorChallengesKept.map((i) => ({
     feature: str(i.feature),
-    explanation: competitorChallengesExplanations[idx],
+    explanation: str(i.explanation),
     whereWeCompete: boolVal(i.whereWeCompete),
     initiativeLetter: initiativeLetterFor(i),
   }));

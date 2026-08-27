@@ -153,8 +153,14 @@
       return;
     }
     el.removeAttribute("data-state");
-    const capped = capTotalLength(items, BOX_TOTAL_LIMIT);
-    el.innerHTML = capped
+    const kept = capBoxItems(
+      items,
+      (t) => t,
+      (item, text) => text,
+      TOP_INITIATIVES_ITEM_LIMIT,
+      TOP_INITIATIVES_TOTAL_LIMIT
+    );
+    el.innerHTML = kept
       .map((t, idx) => {
         const letter = indexToLetter(idx) || String(idx + 1);
         return `<div class="initiative-item"><div class="initiative-badge">${escapeHtml(
@@ -176,12 +182,15 @@
       return;
     }
     el.removeAttribute("data-state");
-    const explanations = capTotalLength(
-      items.map((i) => i.explanation),
+    const kept = capBoxItems(
+      items,
+      (i) => i.explanation,
+      (i, text) => ({ ...i, explanation: text }),
+      ITEM_LIMIT,
       BOX_TOTAL_LIMIT
     );
-    const rows = items
-      .map((i, idx) => {
+    const rows = kept
+      .map((i) => {
         const compete = competeFlag && i.whereWeCompete ? '<div class="tag-compete">Where We Compete</div>' : "";
         const badge = i.initiativeLetter
           ? `<div class="initiative-badge" title="Ties to Top Prospect Initiative ${escapeHtml(
@@ -190,7 +199,7 @@
           : "";
         return `<tr><td><div class="feature-cell"><strong>${escapeHtml(
           i.feature
-        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(explanations[idx])}</td></tr>`;
+        )}</strong>${badge}${compete}</div></td><td>${escapeHtml(i.explanation)}</td></tr>`;
       })
       .join("");
     el.innerHTML = `<table><tbody>${rows}</tbody></table>`;
@@ -417,25 +426,88 @@
     return `${base.trim()}…`;
   }
 
-  // Top Prospect Initiatives, Where We Win, and Competitor Considerations
-  // don't cap any single item — instead the whole box's combined copy is
-  // asked to stay under BOX_TOTAL_LIMIT (1400 characters), so the model
-  // can write a couple of items at real length and others as a single
-  // tight sentence, as the content calls for. The backend enforces this
-  // as a total, but capTotalLength is the client-side safety net for
-  // whatever still slips over (an older cached run, or a response that
-  // missed the budget) — rather than cutting off the box's later items
-  // to zero, it trims every item's SHARE of the overage proportionally
-  // (each item's own capToLimit still resolves at a real sentence/word
-  // boundary), so every item stays present, just shorter.
-  const BOX_TOTAL_LIMIT = 1400;
+  // Where We Win and Competitor Considerations: each item's own copy
+  // ("explanation") is capped at ITEM_LIMIT (220 characters), AND the
+  // box's combined copy across all its items is capped at BOX_TOTAL_LIMIT
+  // (1100 characters) — each box's total counted separately. Top Prospect
+  // Initiatives is the one exception, using its own tighter pair of
+  // numbers (see TOP_INITIATIVES_ITEM_LIMIT/TOP_INITIATIVES_TOTAL_LIMIT
+  // below) since its items are meant to be short one-line bullets.
+  //
+  // Both limits are enforced WITHOUT ever fragmenting a sentence — no
+  // ellipsis, no mid-clause cutoff, ever, in either box. An earlier
+  // version of this trimmed text down to an arbitrary character count
+  // with a "…" appended, which is exactly what produced cutoffs like
+  // "...create seamless handoffs between…". capBoxItems below instead:
+  // (1) for any item over its own ITEM_LIMIT, keeps only as many WHOLE
+  // leading sentences as fit within the limit — and if not even one
+  // complete sentence fits that short, drops the item entirely rather
+  // than showing a fragment; (2) then, across whatever items survive
+  // step 1, keeps them in the order the model wrote them (most important
+  // first, per the prompt) until the next whole item would push the
+  // box's combined length over its total budget, dropping that item and
+  // everything after it. Every item that ends up on the page/in the PDF
+  // is therefore always complete, exactly as the model wrote it (or a
+  // shorter-but-still-complete leading portion of it) — this is expected
+  // to mean fewer/shorter items show up sometimes, which is the tradeoff
+  // asked for over ever truncating a sentence.
+  const ITEM_LIMIT = 220;
+  const BOX_TOTAL_LIMIT = 1100;
+  const TOP_INITIATIVES_ITEM_LIMIT = 130;
+  const TOP_INITIATIVES_TOTAL_LIMIT = 1300;
 
-  function capTotalLength(texts, totalBudget) {
-    const trimmed = texts.map((t) => String(t == null ? "" : t).trim());
-    const total = trimmed.reduce((sum, t) => sum + t.length, 0);
-    if (total <= totalBudget || total === 0) return trimmed;
-    const scale = totalBudget / total;
-    return trimmed.map((t) => capToLimit(t, Math.max(20, Math.floor(t.length * scale))));
+  // Trims `text` down to the last COMPLETE sentence that ends at or
+  // before `maxLen` characters in — never an arbitrary character cut, and
+  // never an ellipsis. Returns null (meaning "drop this item, don't show
+  // a fragment") if not even one complete sentence fits within maxLen.
+  // Scans the ORIGINAL string for each candidate ".", "!", "?" and checks
+  // what actually follows it in the full text (end-of-string or
+  // whitespace) — not a naive slice-then-search, which could mistake a
+  // decimal point or abbreviation landing right at the cutoff for a real
+  // sentence end.
+  function trimToCompleteSentence(text, maxLen) {
+    const t = String(text == null ? "" : text).trim();
+    if (t.length <= maxLen) return t;
+    let lastEnd = -1;
+    for (let i = 0; i < maxLen && i < t.length; i += 1) {
+      const c = t[i];
+      if (c === "." || c === "!" || c === "?") {
+        const next = t[i + 1];
+        if (next === undefined || next === " " || next === "\n") {
+          lastEnd = i;
+        }
+      }
+    }
+    if (lastEnd === -1) return null;
+    return t.slice(0, lastEnd + 1).trim();
+  }
+
+  // Applies both the per-item and per-box-total rules described above to
+  // a box's item list. `getText`/`setText` let this work for both plain
+  // strings (Top Prospect Initiatives) and objects with an "explanation"
+  // field (Where We Win / Competitor Considerations).
+  function capBoxItems(items, getText, setText, itemLimit, totalBudget) {
+    const withinItemLimit = [];
+    for (const item of items) {
+      const text = String(getText(item) == null ? "" : getText(item)).trim();
+      if (text.length <= itemLimit) {
+        withinItemLimit.push(setText(item, text));
+        continue;
+      }
+      const trimmed = trimToCompleteSentence(text, itemLimit);
+      if (trimmed) withinItemLimit.push(setText(item, trimmed));
+      // else: drop this item — no complete sentence fit within itemLimit.
+    }
+
+    const kept = [];
+    let used = 0;
+    for (const item of withinItemLimit) {
+      const text = getText(item);
+      if (kept.length > 0 && used + text.length > totalBudget) break;
+      kept.push(item);
+      used += text.length;
+    }
+    return kept;
   }
 
   // Red used for the "Where We Compete" tag in the PDF (matches the
@@ -476,22 +548,31 @@
     } else if (boxKey === "topInitiatives") {
       const items = boxes.topInitiatives || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      const capped = capTotalLength(items, BOX_TOTAL_LIMIT);
-      capped.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${t}`, false, 5));
+      const kept = capBoxItems(
+        items,
+        (t) => t,
+        (item, text) => text,
+        TOP_INITIATIVES_ITEM_LIMIT,
+        TOP_INITIATIVES_TOTAL_LIMIT
+      );
+      kept.forEach((t, idx) => push(`${indexToLetter(idx) || idx + 1}. ${t}`, false, 5));
     } else if (boxKey === "whereWeWin" || boxKey === "competitorChallenges") {
       const items = boxes[boxKey] || [];
       if (items.length === 0) push("No Relevant Results Found", false, 4);
-      const explanations = capTotalLength(
-        items.map((i) => i.explanation),
+      const kept = capBoxItems(
+        items,
+        (i) => i.explanation,
+        (i, text) => ({ ...i, explanation: text }),
+        ITEM_LIMIT,
         BOX_TOTAL_LIMIT
       );
-      items.forEach((i, idx) => {
+      kept.forEach((i) => {
         push(i.feature, true, 2);
         if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
         if (boxKey === "competitorChallenges" && i.whereWeCompete) {
           push("Where We Compete", true, 3, null, WHERE_WE_COMPETE_RGB);
         }
-        push(explanations[idx], false, 6);
+        push(i.explanation, false, 6);
       });
     } else if (boxKey === "customerReferences") {
       const items = boxes.customerReferences || [];
