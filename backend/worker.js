@@ -399,28 +399,60 @@ Research and return the JSON object described in your instructions now.`;
   return { system, user };
 }
 
-async function callClaude(env, system, userText) {
-  const model = env.ANTHROPIC_MODEL || DEFAULT_MODEL_ID;
+// Statuses worth retrying: 524/529/503/502/500 are all "the request never
+// really got a considered answer" (524 in particular is Cloudflare's own
+// timeout page in front of Anthropic's API, meaning the request was still
+// running past ~100s — genuinely common for this endpoint since it does up
+// to 14 web searches AND now has to write both the full and 280-char
+// "ForPdf" copy for every field). 429 (rate limit) is also worth a short
+// backoff-and-retry rather than failing the user's request outright.
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 524, 529]);
+const RETRY_DELAYS_MS = [2000, 5000]; // before attempt 2, then before attempt 3
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 8000,
-      system,
-      tools: [{ type: WEB_SEARCH_TOOL_TYPE, name: "web_search", max_uses: 14 }],
-      messages: [{ role: "user", content: userText }],
-    }),
-  });
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callClaude(env, system, userText, attempt = 1) {
+  const model = env.ANTHROPIC_MODEL || DEFAULT_MODEL_ID;
+  const maxAttempts = RETRY_DELAYS_MS.length + 1;
+
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 8000,
+        system,
+        tools: [{ type: WEB_SEARCH_TOOL_TYPE, name: "web_search", max_uses: 14 }],
+        messages: [{ role: "user", content: userText }],
+      }),
+    });
+  } catch (networkErr) {
+    // fetch() itself threw — a connection-level failure (DNS, TLS, etc.)
+    // rather than an HTTP error response. Also worth a retry.
+    if (attempt < maxAttempts) {
+      console.warn(`callClaude network error on attempt ${attempt}/${maxAttempts}, retrying:`, networkErr && networkErr.message);
+      await sleep(RETRY_DELAYS_MS[attempt - 1]);
+      return callClaude(env, system, userText, attempt + 1);
+    }
+    throw new Error(`Anthropic API request failed after ${maxAttempts} attempts: ${networkErr && networkErr.message}`);
+  }
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`Anthropic API error ${res.status}: ${detail.slice(0, 500)}`);
+    if (RETRYABLE_STATUSES.has(res.status) && attempt < maxAttempts) {
+      console.warn(`callClaude got ${res.status} on attempt ${attempt}/${maxAttempts}, retrying:`, detail.slice(0, 200));
+      await sleep(RETRY_DELAYS_MS[attempt - 1]);
+      return callClaude(env, system, userText, attempt + 1);
+    }
+    throw new Error(`Anthropic API error ${res.status} after ${attempt} attempt(s): ${detail.slice(0, 500)}`);
   }
 
   const data = await res.json();
@@ -682,6 +714,10 @@ export default {
     try {
       modelText = await callClaude(env, system, user);
     } catch (err) {
+      // The frontend only ever sees the generic message below — this log
+      // line is what makes the real cause (status code + Anthropic's error
+      // body, or a network-level failure) visible via `wrangler tail`.
+      console.error("callClaude failed:", err && err.message ? err.message : err);
       return errorResponse("Could not reach the research service right now. Please try again in a moment.", 502, env);
     }
 
