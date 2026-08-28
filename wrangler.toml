@@ -1,0 +1,19 @@
+name = "battle-card-generator"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Non-secret vars. ALLOWED_EMAILS_DOC_ID points at the live "Customer
+# Overview Dashboard - Approved Emails" allow-list Google Doc referenced in
+# the spec (same doc already used by the Syndication & Event Finder
+# backend on this Cloudflare account). That doc must be shared "Anyone
+# with the link: Viewer" so the Worker can read it without auth. With this
+# set, editing the doc updates who's allowed in — no redeploy needed.
+[vars]
+ALLOWED_EMAILS_DOC_ID = "10rgVyj4uQg8rC4IJNe7Qp4k1QC43YmIBlL9oczWjtLk"
+# ALLOWED_EMAILS_CACHE_TTL_SECONDS = "300"
+# ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
+# ALLOWED_ORIGIN = "https://twishnoff.github.io"
+#
+# Secrets (ANTHROPIC_API_KEY, and optionally ALLOWED_EMAILS as a fallback)
+# should NOT be put here — set them with `wrangler secret put` instead (see
+# README.md).

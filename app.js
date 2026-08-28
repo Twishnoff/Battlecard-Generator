@@ -198,7 +198,7 @@
             )}">${escapeHtml(i.initiativeLetter)}</div>`
           : "";
         return `<tr><td><div class="feature-cell"><strong>${escapeHtml(
-          i.feature
+          capToLimit(i.feature, FEATURE_NAME_LIMIT)
         )}</strong>${badge}${compete}</div></td><td>${escapeHtml(i.explanation)}</td></tr>`;
       })
       .join("");
@@ -456,6 +456,13 @@
   const TOP_INITIATIVES_ITEM_LIMIT = 130;
   const TOP_INITIATIVES_TOTAL_LIMIT = 1300;
 
+  // Where We Win / Competitor Considerations "feature" name — a short
+  // capability-name LABEL (e.g. "Rapid Deployment"), not a sentence, so
+  // it gets its own tight cap via capToLimit and no running box total
+  // (each title stands alone, unlike "explanation"). Mirrors the same
+  // FEATURE_NAME_LIMIT safety net in the backend's worker.js.
+  const FEATURE_NAME_LIMIT = 40;
+
   // Trims `text` down to the last COMPLETE sentence that ends at or
   // before `maxLen` characters in — never an arbitrary character cut, and
   // never an ellipsis. Returns null (meaning "drop this item, don't show
@@ -567,7 +574,7 @@
         BOX_TOTAL_LIMIT
       );
       kept.forEach((i) => {
-        push(i.feature, true, 2);
+        push(capToLimit(i.feature, FEATURE_NAME_LIMIT), true, 2);
         if (i.initiativeLetter) push(`Ties to Initiative ${i.initiativeLetter}`, true, 3);
         if (boxKey === "competitorChallenges" && i.whereWeCompete) {
           push("Where We Compete", true, 3, null, WHERE_WE_COMPETE_RGB);

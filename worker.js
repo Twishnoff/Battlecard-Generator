@@ -205,6 +205,87 @@ async function fetchSiteSnapshot(url) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Customer/case-study page discovery — proactively locate real evidence
+// for the "Customer References" box on the COMPANY's own site, rather
+// than relying entirely on the model's own web_search calls to find it.
+// Marketing sites commonly link a "/customers", "/case-studies",
+// "/use-cases", or "/customer-stories" section from the homepage nav or
+// footer — "use case(s)" is a common alternate label some companies use
+// for the exact same kind of page as a "case study" — which in
+// turn links out to individual customer/case-study pages — this walks
+// exactly that pattern (homepage -> index page(s) -> detail pages) and
+// hands the model real, pre-verified URLs plus their actual page text,
+// so a genuine case study never gets missed just because it didn't fit
+// in the 6000-char homepage snapshot or didn't surface within the
+// model's own search budget.
+// ---------------------------------------------------------------------
+
+// Includes "use case"/"use-case" as an alternate label some companies use
+// in place of "case study" for the exact same kind of page (a page about
+// one specific customer's use of the product) — NOT to be confused with
+// the unrelated "topInitiatives" concept elsewhere in this file, which
+// means "a prospect's business initiative" and has nothing to do with
+// this pattern.
+const CUSTOMER_PAGE_LINK_PATTERN = /(customer[-_]?stor|\/customers?(?:[/"']|$)|case[-_]?stud|use[-_]?case|success[-_]?stor)/i;
+
+// Same-domain-only href scan of raw (unstripped) HTML — deliberately
+// simple regex parsing rather than a full DOM parser, matching the rest
+// of this file's approach to HTML (see stripHtml/extractIconHref above).
+function extractSameDomainLinks(html, baseUrl, pattern, limit) {
+  if (!html) return [];
+  const hrefRegex = /<a\b[^>]*href=["']([^"']+)["']/gi;
+  const baseHost = hostnameOf(baseUrl);
+  const seen = new Set();
+  const results = [];
+  let match;
+  while ((match = hrefRegex.exec(html)) !== null && results.length < limit) {
+    const raw = match[1];
+    if (!raw || raw.startsWith("#") || /^(mailto|tel|javascript):/i.test(raw)) continue;
+    if (!pattern.test(raw)) continue;
+    let abs;
+    try {
+      abs = new URL(raw, baseUrl).toString();
+    } catch (err) {
+      continue;
+    }
+    if (hostnameOf(abs) !== baseHost) continue; // same-domain only — never follow this onto a third party
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    results.push(abs);
+  }
+  return results;
+}
+
+// Walks homepage -> up to 2 likely index pages (shortest matching links
+// first, since "/customers" sorts shorter than "/customers/some-specific-
+// company") -> whatever detail links those index pages themselves
+// contain. Returns the deduped URL list plus a combined text snapshot of
+// the index page(s) actually fetched. Best-effort throughout — every
+// fetch failure just yields fewer links/less snapshot text, never an
+// error that blocks the rest of the request.
+async function discoverCustomerEvidence(companyUrl, companyHtml) {
+  const topLevelLinks = extractSameDomainLinks(companyHtml, companyUrl, CUSTOMER_PAGE_LINK_PATTERN, 10);
+  if (topLevelLinks.length === 0) return { links: [], snapshot: "" };
+
+  const indexCandidates = [...topLevelLinks].sort((a, b) => a.length - b.length).slice(0, 2);
+  const indexFetches = await Promise.all(
+    indexCandidates.map(async (url) => ({ url, html: await fetchRawHtml(url).catch(() => "") }))
+  );
+
+  const deeperLinks = indexFetches.flatMap(({ html }) =>
+    extractSameDomainLinks(html, companyUrl, CUSTOMER_PAGE_LINK_PATTERN, 10)
+  );
+  const links = Array.from(new Set([...topLevelLinks, ...deeperLinks])).slice(0, 12);
+
+  const snapshot = indexFetches
+    .filter(({ html }) => html)
+    .map(({ url, html }) => `${url}\n"""\n${stripHtml(html).slice(0, 2500)}\n"""`)
+    .join("\n\n");
+
+  return { links, snapshot };
+}
+
 // Reads a <meta name="theme-color" content="#xxxxxx"> tag if present.
 function extractThemeColor(html) {
   if (!html) return null;
@@ -306,6 +387,8 @@ function buildPrompt({
   jobTitle,
   industry,
   today,
+  customerEvidenceLinks,
+  customerEvidenceSnapshot,
 }) {
   const industryLine = industry
     ? `Target industry: ${industry}. Restrict job-description research to postings for the target Job Title at companies in this industry. Also prioritize any industry-specific pages/content from either company's website and marketing materials over general messaging when filling out boxes like "Competitor Considerations" or "Where We Win" — general messaging is still useful, but industry-specific proof points should be leaned on more heavily where they exist.`
@@ -353,7 +436,9 @@ Length rule that applies to EVERY prose field below (NOT names, NOT booleans, NO
 
 "whereWeWin" and "competitorChallenges" each have TWO limits that both apply at once: (1) every individual "explanation" must be 220 characters or fewer, AND (2) all the "explanation" values in that box added together must be 1100 characters or fewer — the two boxes' totals are counted separately from each other. "topInitiatives" has its own tighter pair of limits since its items are meant to be short one-line bullets: (1) every individual initiative must be 130 characters or fewer, AND (2) all the initiatives in the box added together must be 1300 characters or fewer.
 
-This is the exact same copy shown on the webpage and in the exported PDF, so for these three boxes: write every item to comfortably fit its own item limit as a complete sentence (don't write a longer draft and expect it to get cut down — compose it short from the start), AND keep an eye on the running total as you write the box's items so the whole box stays within its total budget too. If you truly cannot fit everything (e.g. all 10 strong initiatives at 130 characters would blow past 1300 total), leave out enough of the weakest/least important trailing items (in the priority order described for that field below) that the ones you DO include comfortably fit both limits — never shorten an item's sentence to make it fit instead. Do not pad any field with filler just to approach a limit — shorter is fine as long as the point survives.
+"whereWeWin.feature" and "competitorChallenges.feature" have their own separate, much shorter limit: 40 characters or fewer, no running total (each one stands alone). These render as a short bolded title/badge label above the explanation, not as prose — see the "feature" rule under each box below for exactly what belongs here (a capability name) versus what does NOT (a proof point, metric, or specific outcome, which belongs in "explanation" instead).
+
+This is the exact same copy shown on the webpage and in the exported PDF, so for these four fields: write every item to comfortably fit its own item limit (as a complete sentence for "explanation"/"topInitiatives", as a short capability name for "feature" — don't write a longer draft and expect it to get cut down, compose it short from the start), AND keep an eye on the running total as you write the box's items so the whole box stays within its total budget too. If you truly cannot fit everything (e.g. all 10 strong initiatives at 130 characters would blow past 1300 total), leave out enough of the weakest/least important trailing items (in the priority order described for that field below) that the ones you DO include comfortably fit both limits — never shorten an item's sentence to make it fit instead. Do not pad any field with filler just to approach a limit — shorter is fine as long as the point survives.
 
 Rules for each field:
 
@@ -368,15 +453,19 @@ Rules for each field:
 
 - "boxes.topInitiatives": up to 10 bullet points inferring the business initiatives/priorities of someone with the given Job Title (and Industry, if given), based on patterns across real job postings for that title/level (per the job title matching rule above) and industry. Only include initiatives that relate to what the COMPANY (Company URL) actually sells — ignore initiatives the Job Title handles that are unrelated to this company's product category, even if those initiatives are important to the role in general. Each initiative is a single, tight sentence of 130 characters or fewer (see the Length rule above), and the combined length of all initiatives in this box together must also stay under 1300 characters — with items that short, 10 of them (1300 characters) is the natural ceiling, so favor fewer, sharper initiatives over stretching to fill all 10 if the shorter list is stronger. ORDER MATTERS: list these from most to least significant/frequent — the frontend displays them as a lettered list (A, B, C, ...) in this exact order, and "whereWeWin"/"competitorChallenges" items below reference them by that position, so put the most important initiative first.
 
-- "boxes.whereWeWin": up to 5 items. Take the COMPANY's (Company URL) products/features/proof points that are superior to or lead the COMPETITOR's (Competitor URL) equivalent, then match them to the highest-ranking items in "topInitiatives" they help with. "feature" is the feature/capability name; "explanation" cites any concrete proof points (performance numbers, savings, adoption numbers, etc.) explaining why the company's product is the ideal solution for that initiative, in 220 characters or fewer (see the Length rule above) — pick the SINGLE strongest proof point rather than trying to list several and running out of room mid-sentence. Every "explanation" in this box added together must also stay under 1100 characters. "relatedInitiativeIndex" is the 0-based index into the "topInitiatives" array (so 0 = the first/"A" initiative, 1 = the second/"B" initiative, etc.) of the single initiative this feature is MOST relevant to — this is used to tag the feature with that initiative's letter, so pick exactly one, the best match.
+- "boxes.whereWeWin": up to 5 items. Take the COMPANY's (Company URL) products/features/proof points that are superior to or lead the COMPETITOR's (Competitor URL) equivalent, then match them to the highest-ranking items in "topInitiatives" they help with. "feature" is a short, GENERALIZABLE capability/feature name (40 characters or fewer, see above) — it must name the capability itself (e.g. "Rapid Deployment", "Real-Time Collaboration"), NEVER a proof point, metric, specific number, or one-off customer outcome (e.g. NOT "4,000+ Hours Saved in First Deployment" — that specific figure belongs in "explanation" instead, as the supporting evidence FOR the "Rapid Deployment" capability, not as the title itself). "explanation" cites any concrete proof points (performance numbers, savings, adoption numbers, etc.) explaining why the company's product is the ideal solution for that initiative, in 220 characters or fewer (see the Length rule above) — pick the SINGLE strongest proof point rather than trying to list several and running out of room mid-sentence. Every "explanation" in this box added together must also stay under 1100 characters. "relatedInitiativeIndex" is the 0-based index into the "topInitiatives" array (so 0 = the first/"A" initiative, 1 = the second/"B" initiative, etc.) of the single initiative this feature is MOST relevant to — this is used to tag the feature with that initiative's letter, so pick exactly one, the best match.
 
-- "boxes.competitorChallenges": the mirror of "whereWeWin" — up to 5 items highlighting the COMPETITOR's (Competitor URL) features/capabilities that address the top initiatives, where the COMPANY (Company URL) is comparably weaker or has thinner proof points. Same "feature"/"explanation"/"relatedInitiativeIndex" shape and the same 220-characters-per-item / 1100-characters-total rule as "whereWeWin" (this box's 1100-character total is its own separate budget, independent of "whereWeWin"'s). Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies compete on that same initiative) — false otherwise. (This box is labeled "Competitor Considerations" on the webpage and in the PDF — keep using the "competitorChallenges" key here.)
+- "boxes.competitorChallenges": up to 5 items surfacing the COMPETITOR's (Competitor URL) features/capabilities, SELECTED BY matching them against "topInitiatives" and keeping only the best-aligned ones — same selection method as "whereWeWin" (match to the highest-ranking initiative each one helps with, then keep the top 5 best-aligned matches). This is a selection rule about initiative-relevance, NOT a requirement that the COMPANY be weaker there — include a competitor capability here whenever it's a strong, relevant answer to a top initiative, regardless of how the COMPANY stacks up on that same ground; the "whereWeCompete" flag (below) is what distinguishes the two cases, and it changes how you WRITE the item, not whether you include it. Same "feature"/"relatedInitiativeIndex" shape and the same 40-character "feature"-name rule as "whereWeWin" (a capability name, e.g. "Pay-Per-Use Pricing" — never a proof point or metric as the title). Same 220-characters-per-item / 1100-characters-total rule on "explanation" as "whereWeWin" (this box's 1100-character total is its own separate budget, independent of "whereWeWin"'s).
+  Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies have a relevant capability for that same initiative, even if via different features) — false otherwise. This flag changes what "explanation" should say:
+  - "whereWeCompete": false (the COMPANY doesn't otherwise address this initiative) — write "explanation" as a straightforward, factual description of the COMPETITOR's capability/proof point on that initiative, so the account executive understands what they're up against on ground the COMPANY isn't contesting.
+  - "whereWeCompete": true (both companies address this initiative) — do NOT just neutrally describe the competitor's offering. Write "explanation" as a comparative POSITIONING statement: briefly acknowledge what's genuinely true or appealing about the competitor's approach, then pivot to why/where the COMPANY's approach is the better fit — ideally for a specific segment or context, using a real proof point from the COMPANY's own site where you have one. For example, if the competitor offers low-cost pay-per-use pricing, don't just write "Low-cost pay-per-use pricing" — write something like "Good for low usage, but [Company]'s flat rate is more cost-effective for larger enterprises" (substituting the COMPANY's real name and real pricing model). The goal is to hand the account executive a ready-to-use talking point for exactly the moment a prospect brings up this competitor's pitch, not just a summary of the competitor's marketing.
+  (This box is labeled "Competitor Considerations" on the webpage and in the PDF — keep using the "competitorChallenges" key here.)
 
 - "boxes.customerReferences": up to 5 customers of the COMPANY (Company URL) — never a customer of the COMPETITOR. A company only qualifies as a customer reference if you have ONE of these three specific kinds of evidence, AND you are confident it's genuinely about the COMPANY's own actual product (matched by the COMPANY's real product name, not just the same general category or a similar-sounding tool) rather than some other vendor's product:
   (1) a source — the COMPANY's own site, a press release, or a review platform — that explicitly states this company/customer has used or is using the COMPANY's product;
-  (2) a dedicated case study, customer story, or use-case page hosted on the COMPANY's OWN website that is specifically focused on that customer's use of the COMPANY's product; or
+  (2) a dedicated case study, customer story, or use-case page hosted on the COMPANY's OWN website that is specifically focused on that customer's use of the COMPANY's product — some companies label this exact kind of page "Use Cases" instead of "Case Studies"; treat those interchangeably, it's the same evidence type either way; or
   (3) a customer logo shown on the COMPANY's OWN website specifically in a customer-logos/"trusted by"/"our customers" context — not a logo appearing for some other reason (partner, integration, award, press-mention logo, etc.).
-Do NOT include a company just because a third-party blog post, roundup, or comparison article names them — these frequently describe a company using a DIFFERENT vendor's product that merely sounds similar or serves the same category, and mistaking that for a genuine COMPANY customer is the single most common mistake to avoid here. If you can't clearly tie the named company to the COMPANY's actual product through one of the three evidence types above, leave them out rather than include them on a hunch.
+Do NOT include a company just because a third-party blog post, roundup, or comparison article names them — these frequently describe a company using a DIFFERENT vendor's product that merely sounds similar or serves the same category, and mistaking that for a genuine COMPANY customer is a mistake to avoid here. This caution is specifically about THIRD-PARTY content attributing the wrong vendor — it is NOT a reason to doubt or omit a genuine first-party case study/customer-story page that lives on the COMPANY's own site and names the COMPANY's product directly: that is exactly evidence type (2), cite it confidently rather than second-guessing it. If the user message below includes a "Known customer/case-study links" list, those URLs were already fetched from the COMPANY's own site and verified to exist — treat them as pre-confirmed evidence type (2)/(3) sources, use the exact URLs given (never alter them), and pull as many genuine, distinct customers out of them as you can find (up to 5) before falling back to your own web search for any remaining slots. Only leave a candidate out if you genuinely cannot tie it to the COMPANY's own product through one of the three evidence types — don't leave the box sparse or empty when solid first-party evidence was handed to you.
 Order: any customers in the specified Industry first (set "inIndustry": true on those), then the rest ordered by company size (employee count/revenue) where knowable, otherwise alphabetically. If no Industry was specified, "inIndustry" should be false for all. For each customer, also find exactly ONE URL that serves as the evidence itself: prefer a dedicated case study/customer story/testimonial page per evidence type (2) above (set "referenceType": "case_study"); otherwise use the page that gave you evidence type (1) or (3) — a press release, a logos/"trusted by" page, a review — and set "referenceType": "mention". Use the single most specific, most authoritative URL you can find (never a search-results page, and NEVER a page hosted on the Competitor URL's own domain — a "Company vs Competitor" comparison page living on the competitor's site is not proof of a Company customer, even if it names one). If you can't find a genuine URL for a customer, set both "referenceUrl" and "referenceType" to null — never fabricate or guess a URL.
 
 - "boxes.talkingPoints": Q&A entries, written from the perspective of a salesperson at the COMPANY (Company URL), using messaging/proof points/numbers from both companies' sites where possible. ALWAYS include exactly these three: (1) question: "This product is too expensive" (2) question: "How are you any better than [the competitor's actual name, not the literal word 'competitor']?" (3) question: "We already have a similar solution, why would we replace it with you?". Each "answer" should specifically counter the competitor's top features/marketing claims found in "theirFeatures" and "competitorChallenges", and should align with the prospect Job Title's priorities from "topInitiatives" — write the tightest phrasing that still lands the point and keeps any concrete proof point intact; never sacrifice a concrete number or proof point just to shorten it further. You may include up to 2 additional strong Q&A pairs beyond these three if genuinely useful, for a maximum of 5 total.
@@ -385,11 +474,23 @@ Order: any customers in the specified Industry first (set "inIndustry": true on 
 
 All object/array fields must always be present (use an empty array/short placeholder string rather than omitting a key). Do not pad any list with weak/irrelevant items just to fill a quota — fewer strong items beats more weak ones, but always try to reach the stated counts where good candidates genuinely exist.`;
 
+  const evidenceLinksBlock =
+    customerEvidenceLinks && customerEvidenceLinks.length
+      ? customerEvidenceLinks.map((u) => `- ${u}`).join("\n")
+      : "(none found automatically on the homepage/footer — search the COMPANY's own site yourself, e.g. a \"/customers\", \"/case-studies\", \"/use-cases\", or \"/customer-stories\" section is common on B2B sites — some companies label this same kind of page \"use cases\" instead of \"case studies\")";
+
+  const evidenceSnapshotBlock = customerEvidenceSnapshot
+    ? `\n\nSnapshot(s) of the COMPANY's own customer/case-study page(s) found via those links (may be incomplete — use web search or the links above to fill in more):\n"""\n${customerEvidenceSnapshot}\n"""`
+    : "";
+
   const user = `Company URL (the account executive's own company — the seller): ${companyUrl}
 Homepage snapshot (may be incomplete — use web search for more):
 """
 ${companySnapshot || "(could not fetch homepage automatically — please look this company up yourself)"}
 """
+
+Known customer/case-study links found directly on the COMPANY's own site (pre-verified to exist — see the "boxes.customerReferences" rule above for how to use these):
+${evidenceLinksBlock}${evidenceSnapshotBlock}
 
 Competitor URL (the competitor being sold against): ${competitorUrl}
 Homepage snapshot (may be incomplete — use web search for more):
@@ -553,6 +654,15 @@ const BOX_TOTAL_LIMIT = 1100;
 const TOP_INITIATIVES_ITEM_LIMIT = 130;
 const TOP_INITIATIVES_TOTAL_LIMIT = 1300;
 
+// "whereWeWin"/"competitorChallenges" feature-name safety net (see the
+// prompt's "feature" rule for each box): a short capability-name LABEL,
+// not a sentence, so it gets its own tight cap and no running total (no
+// per-box budget the way "explanation" has — each title stands alone).
+// Uses the same word-boundary/ellipsis fallback as capToLimit (below)
+// rather than trimToCompleteSentence, since a title has no sentence
+// punctuation to anchor on.
+const FEATURE_NAME_LIMIT = 40;
+
 // Trims `text` down to the last COMPLETE sentence that ends at or before
 // `maxLen` characters in — never an arbitrary character cut, never an
 // ellipsis. Returns null (meaning "drop this item, don't show a
@@ -677,7 +787,7 @@ function sanitizeBoxes(raw, competitorNameFallback, competitorHostname) {
       BOX_TOTAL_LIMIT
     );
     return kept.map((i) => ({
-      feature: str(i.feature),
+      feature: capToLimit(str(i.feature), FEATURE_NAME_LIMIT),
       explanation: str(i.explanation),
       initiativeLetter: initiativeLetterFor(i),
     }));
@@ -695,7 +805,7 @@ function sanitizeBoxes(raw, competitorNameFallback, competitorHostname) {
     BOX_TOTAL_LIMIT
   );
   const competitorChallenges = competitorChallengesKept.map((i) => ({
-    feature: str(i.feature),
+    feature: capToLimit(str(i.feature), FEATURE_NAME_LIMIT),
     explanation: str(i.explanation),
     whereWeCompete: boolVal(i.whereWeCompete),
     initiativeLetter: initiativeLetterFor(i),
@@ -810,6 +920,13 @@ export default {
     const competitorSnapshotText = competitorHtml ? stripHtml(competitorHtml).slice(0, 6000) : "";
 
     const brandKitPromise = fetchBrandKit(companyUrl, companyHtml);
+    // Best-effort: never let a slow/failed customer-page crawl block or
+    // fail the whole request — Customer References just falls back to
+    // the model's own web search if this comes back empty.
+    const customerEvidence = await discoverCustomerEvidence(companyUrl, companyHtml).catch(() => ({
+      links: [],
+      snapshot: "",
+    }));
 
     const { system, user } = buildPrompt({
       companyUrl,
@@ -819,6 +936,8 @@ export default {
       jobTitle,
       industry,
       today,
+      customerEvidenceLinks: customerEvidence.links,
+      customerEvidenceSnapshot: customerEvidence.snapshot,
     });
 
     let modelText;
