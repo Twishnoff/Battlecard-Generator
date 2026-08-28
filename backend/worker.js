@@ -205,6 +205,87 @@ async function fetchSiteSnapshot(url) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Customer/case-study page discovery — proactively locate real evidence
+// for the "Customer References" box on the COMPANY's own site, rather
+// than relying entirely on the model's own web_search calls to find it.
+// Marketing sites commonly link a "/customers", "/case-studies",
+// "/use-cases", or "/customer-stories" section from the homepage nav or
+// footer — "use case(s)" is a common alternate label some companies use
+// for the exact same kind of page as a "case study" — which in
+// turn links out to individual customer/case-study pages — this walks
+// exactly that pattern (homepage -> index page(s) -> detail pages) and
+// hands the model real, pre-verified URLs plus their actual page text,
+// so a genuine case study never gets missed just because it didn't fit
+// in the 6000-char homepage snapshot or didn't surface within the
+// model's own search budget.
+// ---------------------------------------------------------------------
+
+// Includes "use case"/"use-case" as an alternate label some companies use
+// in place of "case study" for the exact same kind of page (a page about
+// one specific customer's use of the product) — NOT to be confused with
+// the unrelated "topInitiatives" concept elsewhere in this file, which
+// means "a prospect's business initiative" and has nothing to do with
+// this pattern.
+const CUSTOMER_PAGE_LINK_PATTERN = /(customer[-_]?stor|\/customers?(?:[/"']|$)|case[-_]?stud|use[-_]?case|success[-_]?stor)/i;
+
+// Same-domain-only href scan of raw (unstripped) HTML — deliberately
+// simple regex parsing rather than a full DOM parser, matching the rest
+// of this file's approach to HTML (see stripHtml/extractIconHref above).
+function extractSameDomainLinks(html, baseUrl, pattern, limit) {
+  if (!html) return [];
+  const hrefRegex = /<a\b[^>]*href=["']([^"']+)["']/gi;
+  const baseHost = hostnameOf(baseUrl);
+  const seen = new Set();
+  const results = [];
+  let match;
+  while ((match = hrefRegex.exec(html)) !== null && results.length < limit) {
+    const raw = match[1];
+    if (!raw || raw.startsWith("#") || /^(mailto|tel|javascript):/i.test(raw)) continue;
+    if (!pattern.test(raw)) continue;
+    let abs;
+    try {
+      abs = new URL(raw, baseUrl).toString();
+    } catch (err) {
+      continue;
+    }
+    if (hostnameOf(abs) !== baseHost) continue; // same-domain only — never follow this onto a third party
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    results.push(abs);
+  }
+  return results;
+}
+
+// Walks homepage -> up to 2 likely index pages (shortest matching links
+// first, since "/customers" sorts shorter than "/customers/some-specific-
+// company") -> whatever detail links those index pages themselves
+// contain. Returns the deduped URL list plus a combined text snapshot of
+// the index page(s) actually fetched. Best-effort throughout — every
+// fetch failure just yields fewer links/less snapshot text, never an
+// error that blocks the rest of the request.
+async function discoverCustomerEvidence(companyUrl, companyHtml) {
+  const topLevelLinks = extractSameDomainLinks(companyHtml, companyUrl, CUSTOMER_PAGE_LINK_PATTERN, 10);
+  if (topLevelLinks.length === 0) return { links: [], snapshot: "" };
+
+  const indexCandidates = [...topLevelLinks].sort((a, b) => a.length - b.length).slice(0, 2);
+  const indexFetches = await Promise.all(
+    indexCandidates.map(async (url) => ({ url, html: await fetchRawHtml(url).catch(() => "") }))
+  );
+
+  const deeperLinks = indexFetches.flatMap(({ html }) =>
+    extractSameDomainLinks(html, companyUrl, CUSTOMER_PAGE_LINK_PATTERN, 10)
+  );
+  const links = Array.from(new Set([...topLevelLinks, ...deeperLinks])).slice(0, 12);
+
+  const snapshot = indexFetches
+    .filter(({ html }) => html)
+    .map(({ url, html }) => `${url}\n"""\n${stripHtml(html).slice(0, 2500)}\n"""`)
+    .join("\n\n");
+
+  return { links, snapshot };
+}
+
 // Reads a <meta name="theme-color" content="#xxxxxx"> tag if present.
 function extractThemeColor(html) {
   if (!html) return null;
@@ -306,6 +387,8 @@ function buildPrompt({
   jobTitle,
   industry,
   today,
+  customerEvidenceLinks,
+  customerEvidenceSnapshot,
 }) {
   const industryLine = industry
     ? `Target industry: ${industry}. Restrict job-description research to postings for the target Job Title at companies in this industry. Also prioritize any industry-specific pages/content from either company's website and marketing materials over general messaging when filling out boxes like "Competitor Considerations" or "Where We Win" — general messaging is still useful, but industry-specific proof points should be leaned on more heavily where they exist.`
@@ -372,7 +455,12 @@ Rules for each field:
 
 - "boxes.competitorChallenges": the mirror of "whereWeWin" — up to 5 items highlighting the COMPETITOR's (Competitor URL) features/capabilities that address the top initiatives, where the COMPANY (Company URL) is comparably weaker or has thinner proof points. Same "feature"/"explanation"/"relatedInitiativeIndex" shape and the same 220-characters-per-item / 1100-characters-total rule as "whereWeWin" (this box's 1100-character total is its own separate budget, independent of "whereWeWin"'s). Set "whereWeCompete": true on any item here whose underlying initiative is ALSO addressed by an item in "whereWeWin" (i.e. both companies compete on that same initiative) — false otherwise. (This box is labeled "Competitor Considerations" on the webpage and in the PDF — keep using the "competitorChallenges" key here.)
 
-- "boxes.customerReferences": up to 5 customers named on the COMPANY's (Company URL) website/marketing materials/social posts. Order: any customers in the specified Industry first (set "inIndustry": true on those), then the rest ordered by company size (employee count/revenue) where knowable, otherwise alphabetically. If no Industry was specified, "inIndustry" should be false for all. For each customer, also try to find exactly ONE URL that serves as proof this is a real customer: prefer a dedicated case study, customer story, or testimonial page about them if the COMPANY has one (set "referenceType": "case_study"); otherwise use any other page that names them as a customer — a press release, a logos/quotes page, a review — and set "referenceType": "mention". Use the single most specific, most authoritative URL you can find (never a search-results page). If you can't find a genuine URL for a customer, set both "referenceUrl" and "referenceType" to null — never fabricate or guess a URL.
+- "boxes.customerReferences": up to 5 customers of the COMPANY (Company URL) — never a customer of the COMPETITOR. A company only qualifies as a customer reference if you have ONE of these three specific kinds of evidence, AND you are confident it's genuinely about the COMPANY's own actual product (matched by the COMPANY's real product name, not just the same general category or a similar-sounding tool) rather than some other vendor's product:
+  (1) a source — the COMPANY's own site, a press release, or a review platform — that explicitly states this company/customer has used or is using the COMPANY's product;
+  (2) a dedicated case study, customer story, or use-case page hosted on the COMPANY's OWN website that is specifically focused on that customer's use of the COMPANY's product — some companies label this exact kind of page "Use Cases" instead of "Case Studies"; treat those interchangeably, it's the same evidence type either way; or
+  (3) a customer logo shown on the COMPANY's OWN website specifically in a customer-logos/"trusted by"/"our customers" context — not a logo appearing for some other reason (partner, integration, award, press-mention logo, etc.).
+Do NOT include a company just because a third-party blog post, roundup, or comparison article names them — these frequently describe a company using a DIFFERENT vendor's product that merely sounds similar or serves the same category, and mistaking that for a genuine COMPANY customer is a mistake to avoid here. This caution is specifically about THIRD-PARTY content attributing the wrong vendor — it is NOT a reason to doubt or omit a genuine first-party case study/customer-story page that lives on the COMPANY's own site and names the COMPANY's product directly: that is exactly evidence type (2), cite it confidently rather than second-guessing it. If the user message below includes a "Known customer/case-study links" list, those URLs were already fetched from the COMPANY's own site and verified to exist — treat them as pre-confirmed evidence type (2)/(3) sources, use the exact URLs given (never alter them), and pull as many genuine, distinct customers out of them as you can find (up to 5) before falling back to your own web search for any remaining slots. Only leave a candidate out if you genuinely cannot tie it to the COMPANY's own product through one of the three evidence types — don't leave the box sparse or empty when solid first-party evidence was handed to you.
+Order: any customers in the specified Industry first (set "inIndustry": true on those), then the rest ordered by company size (employee count/revenue) where knowable, otherwise alphabetically. If no Industry was specified, "inIndustry" should be false for all. For each customer, also find exactly ONE URL that serves as the evidence itself: prefer a dedicated case study/customer story/testimonial page per evidence type (2) above (set "referenceType": "case_study"); otherwise use the page that gave you evidence type (1) or (3) — a press release, a logos/"trusted by" page, a review — and set "referenceType": "mention". Use the single most specific, most authoritative URL you can find (never a search-results page, and NEVER a page hosted on the Competitor URL's own domain — a "Company vs Competitor" comparison page living on the competitor's site is not proof of a Company customer, even if it names one). If you can't find a genuine URL for a customer, set both "referenceUrl" and "referenceType" to null — never fabricate or guess a URL.
 
 - "boxes.talkingPoints": Q&A entries, written from the perspective of a salesperson at the COMPANY (Company URL), using messaging/proof points/numbers from both companies' sites where possible. ALWAYS include exactly these three: (1) question: "This product is too expensive" (2) question: "How are you any better than [the competitor's actual name, not the literal word 'competitor']?" (3) question: "We already have a similar solution, why would we replace it with you?". Each "answer" should specifically counter the competitor's top features/marketing claims found in "theirFeatures" and "competitorChallenges", and should align with the prospect Job Title's priorities from "topInitiatives" — write the tightest phrasing that still lands the point and keeps any concrete proof point intact; never sacrifice a concrete number or proof point just to shorten it further. You may include up to 2 additional strong Q&A pairs beyond these three if genuinely useful, for a maximum of 5 total.
 
@@ -380,11 +468,23 @@ Rules for each field:
 
 All object/array fields must always be present (use an empty array/short placeholder string rather than omitting a key). Do not pad any list with weak/irrelevant items just to fill a quota — fewer strong items beats more weak ones, but always try to reach the stated counts where good candidates genuinely exist.`;
 
+  const evidenceLinksBlock =
+    customerEvidenceLinks && customerEvidenceLinks.length
+      ? customerEvidenceLinks.map((u) => `- ${u}`).join("\n")
+      : "(none found automatically on the homepage/footer — search the COMPANY's own site yourself, e.g. a \"/customers\", \"/case-studies\", \"/use-cases\", or \"/customer-stories\" section is common on B2B sites — some companies label this same kind of page \"use cases\" instead of \"case studies\")";
+
+  const evidenceSnapshotBlock = customerEvidenceSnapshot
+    ? `\n\nSnapshot(s) of the COMPANY's own customer/case-study page(s) found via those links (may be incomplete — use web search or the links above to fill in more):\n"""\n${customerEvidenceSnapshot}\n"""`
+    : "";
+
   const user = `Company URL (the account executive's own company — the seller): ${companyUrl}
 Homepage snapshot (may be incomplete — use web search for more):
 """
 ${companySnapshot || "(could not fetch homepage automatically — please look this company up yourself)"}
 """
+
+Known customer/case-study links found directly on the COMPANY's own site (pre-verified to exist — see the "boxes.customerReferences" rule above for how to use these):
+${evidenceLinksBlock}${evidenceSnapshotBlock}
 
 Competitor URL (the competitor being sold against): ${competitorUrl}
 Homepage snapshot (may be incomplete — use web search for more):
@@ -623,7 +723,7 @@ function indexToLetter(index) {
   return String.fromCharCode(65 + index);
 }
 
-function sanitizeBoxes(raw, competitorNameFallback) {
+function sanitizeBoxes(raw, competitorNameFallback, competitorHostname) {
   const boxes = (raw && raw.boxes) || {};
 
   const competitorProductRaw = boxes.competitorProduct || {};
@@ -700,7 +800,23 @@ function sanitizeBoxes(raw, competitorNameFallback) {
     .filter((i) => i && str(i.name))
     .slice(0, 5)
     .map((i) => {
-      const referenceUrl = urlOrNull(i.referenceUrl);
+      let referenceUrl = urlOrNull(i.referenceUrl);
+      // Guardrail: a customer reference is supposed to be proof this
+      // company (Company URL) has this customer. A link that actually
+      // lives on the COMPETITOR's own domain (e.g. a "Company vs
+      // Competitor" comparison page the competitor published, which can
+      // legitimately name the company's real customers) is not proof of
+      // that — it's the competitor's page. The prompt already tells the
+      // model never to cite one, but this is the enforced backstop: drop
+      // the link (never the customer name itself, which may still be
+      // genuine) rather than let a competitor-hosted URL pass through as
+      // this company's reference.
+      if (referenceUrl && competitorHostname) {
+        const refHostname = hostnameOf(referenceUrl);
+        if (refHostname === competitorHostname || refHostname.endsWith(`.${competitorHostname}`)) {
+          referenceUrl = null;
+        }
+      }
       const referenceType = !referenceUrl
         ? null
         : i.referenceType === "case_study" || i.referenceType === "mention"
@@ -789,6 +905,13 @@ export default {
     const competitorSnapshotText = competitorHtml ? stripHtml(competitorHtml).slice(0, 6000) : "";
 
     const brandKitPromise = fetchBrandKit(companyUrl, companyHtml);
+    // Best-effort: never let a slow/failed customer-page crawl block or
+    // fail the whole request — Customer References just falls back to
+    // the model's own web search if this comes back empty.
+    const customerEvidence = await discoverCustomerEvidence(companyUrl, companyHtml).catch(() => ({
+      links: [],
+      snapshot: "",
+    }));
 
     const { system, user } = buildPrompt({
       companyUrl,
@@ -798,6 +921,8 @@ export default {
       jobTitle,
       industry,
       today,
+      customerEvidenceLinks: customerEvidence.links,
+      customerEvidenceSnapshot: customerEvidence.snapshot,
     });
 
     let modelText;
@@ -818,7 +943,7 @@ export default {
 
     const companyName = str(parsed.companyName, hostnameOf(companyUrl));
     const competitorName = str(parsed.competitorName, hostnameOf(competitorUrl));
-    const boxes = sanitizeBoxes(parsed, competitorName);
+    const boxes = sanitizeBoxes(parsed, competitorName, hostnameOf(competitorUrl));
 
     const brandKit = await brandKitPromise.catch(() => ({ logoDataUri: null, brandColor: null }));
 
