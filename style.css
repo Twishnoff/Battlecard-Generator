@@ -47,6 +47,15 @@ body {
   line-height: 1.5;
 }
 
+.subtitle + .subtitle {
+  margin-top: 10px;
+}
+
+.subtitle a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .input-panel {
   background: var(--panel-bg);
   border: 1px solid var(--border);
